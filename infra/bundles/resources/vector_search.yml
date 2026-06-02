@@ -1,0 +1,22 @@
+# Vector Search — endpoint + DELTA_SYNC index over the resolved-cases table, embedding
+# the case text (features + analyst notes + outcome, per docs/copilot-design.md). Feeds
+# the copilot's search_similar_cases tool.
+
+resources:
+  vector_search_endpoints:
+    cases:
+      name: ${var.vector_endpoint_name}
+      endpoint_type: STANDARD
+
+  vector_search_indexes:
+    similar_cases:
+      name: ${var.catalog}.gold.case_embeddings_index
+      endpoint_name: ${var.vector_endpoint_name}
+      primary_key: case_id
+      index_type: DELTA_SYNC
+      delta_sync_index_spec:
+        source_table: ${var.cases_source_table}
+        pipeline_type: TRIGGERED
+        embedding_source_columns:
+          - name: case_text
+            embedding_model_endpoint_name: ${var.embedding_endpoint_name}

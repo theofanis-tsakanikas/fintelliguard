@@ -1,0 +1,60 @@
+# FintelliGuard — Databricks Asset Bundle.
+#
+# Deploys ALL Databricks workloads: DLT medallion pipeline, the XGBoost get_fraud_score
+# serving endpoint, Vector Search (endpoint + index), the copilot agent serving endpoint,
+# Unity Catalog schemas/models with least-privilege grants, and a secret scope. The Genie
+# space is created via a documented SDK fallback (scripts/genie_space.py) — Genie is not
+# yet a DABs resource type.
+#
+# BUILD + offline-validate only. Variables marked "(deploy)" are set at deploy time from
+# infra/databricks outputs / the workspace; `databricks bundle deploy` is deferred.
+
+bundle:
+  name: fintelliguard
+
+variables:
+  catalog:
+    description: Unity Catalog for FintelliGuard (infra/databricks catalog_name output).
+    default: fintelliguard
+  warehouse_id:
+    description: (deploy) SQL warehouse id backing Genie / query_lakehouse.
+    default: ""
+  analyst_group:
+    description: Unity Catalog group of fraud analysts (copilot + serving consumers).
+    default: fintelliguard-analysts
+  embedding_endpoint_name:
+    description: Foundation-model embedding endpoint backing Vector Search.
+    default: databricks-bge-large-en
+  fraud_model_name:
+    description: UC name of the XGBoost scorer model.
+    default: fintelliguard.ml.fraud_scorer
+  fraud_model_version:
+    description: Served version of the scorer model.
+    default: "1"
+  agent_model_name:
+    description: UC name of the copilot agent model.
+    default: fintelliguard.ml.copilot_agent
+  agent_model_version:
+    description: Served version of the agent model.
+    default: "1"
+  vector_endpoint_name:
+    description: Vector Search endpoint name.
+    default: fintelliguard-cases
+  cases_source_table:
+    description: Delta table of resolved fraud cases feeding the case index.
+    default: fintelliguard.gold.resolved_cases
+  pipeline_continuous:
+    description: DLT execution mode — true=continuous (streaming), false=triggered (batch).
+    default: false
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      # Placeholder — auth fields cannot use variables. At deploy, set the real host via
+      # the DATABRICKS_HOST env var / a profile (from the infra/databricks workspace_url).
+      host: https://dbc-fintelliguard-dev.cloud.databricks.com

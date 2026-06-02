@@ -1,0 +1,50 @@
+# Unity Catalog schemas/models the bundle owns + least-privilege grants, and a secret
+# scope. infra/databricks owns the catalog + bronze/silver/gold schemas; SELECT grants on
+# those (for query_lakehouse / Genie) are managed in that UC layer. Here we own the `ml`
+# and `features` schemas, the model containers, and grant EXECUTE/USE to analysts.
+
+resources:
+  schemas:
+    ml:
+      name: ml
+      catalog_name: ${var.catalog}
+      comment: Models and serving artifacts.
+      grants:
+        - principal: ${var.analyst_group}
+          privileges:
+            - USE_SCHEMA
+    features:
+      name: features
+      catalog_name: ${var.catalog}
+      comment: Feature Store tables (txn_features).
+      grants:
+        - principal: ${var.analyst_group}
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+
+  registered_models:
+    fraud_scorer_model:
+      name: fraud_scorer
+      catalog_name: ${var.catalog}
+      schema_name: ml
+      comment: XGBoost get_fraud_score model.
+      grants:
+        - principal: ${var.analyst_group}
+          privileges:
+            - EXECUTE
+    copilot_agent_model:
+      name: copilot_agent
+      catalog_name: ${var.catalog}
+      schema_name: ml
+      comment: Mosaic AI copilot agent model.
+      grants:
+        - principal: ${var.analyst_group}
+          privileges:
+            - EXECUTE
+
+  secret_scopes:
+    fintelliguard:
+      name: fintelliguard
+      # Secret VALUES (e.g. external API keys) are injected out of band — never in the
+      # bundle. Workloads read them via {{secrets/fintelliguard/<key>}}.

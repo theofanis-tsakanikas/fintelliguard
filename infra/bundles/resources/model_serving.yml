@@ -1,0 +1,21 @@
+# XGBoost get_fraud_score endpoint (ml/serving pyfunc) — the SAME endpoint Bedrock and
+# the copilot call. Autoscaling (scale-to-zero) for cost control in dev.
+
+resources:
+  model_serving_endpoints:
+    fraud_score:
+      name: fintelliguard-fraud-score
+      config:
+        served_entities:
+          - name: fraud-xgb
+            entity_name: ${var.fraud_model_name}
+            entity_version: ${var.fraud_model_version}
+            workload_size: Small
+            scale_to_zero_enabled: true
+        traffic_config:
+          routes:
+            - served_model_name: fraud-xgb
+              traffic_percentage: 100
+      permissions:
+        - level: CAN_QUERY
+          group_name: ${var.analyst_group}

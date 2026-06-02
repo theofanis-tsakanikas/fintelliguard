@@ -1,0 +1,29 @@
+# DLT medallion pipeline — runs the @dlt.* modules from pipelines/ into the
+# fintelliguard catalog (bronze -> silver -> gold), per docs/data-flow.md.
+#
+# One pipeline references all three layer modules so cross-layer dlt.read works as the
+# code is written. Splitting the streaming (continuous) and batch/IEEE (triggered) paths
+# into separate pipelines, and packaging the modules as a wheel (the @dlt files use
+# relative imports), are deploy-phase refinements.
+
+resources:
+  pipelines:
+    medallion:
+      name: fintelliguard-medallion
+      catalog: ${var.catalog}
+      continuous: ${var.pipeline_continuous}
+      development: true
+      photon: true
+      edition: ADVANCED
+      channel: CURRENT
+
+      libraries:
+        - file:
+            path: ../../pipelines/bronze/bronze_pipeline.py
+        - file:
+            path: ../../pipelines/silver/silver_pipeline.py
+        - file:
+            path: ../../pipelines/gold/gold_pipeline.py
+
+      configuration:
+        fintelliguard.catalog: ${var.catalog}
