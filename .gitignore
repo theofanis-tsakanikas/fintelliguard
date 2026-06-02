@@ -36,6 +36,7 @@ htmlcov/
 # ---- Environment / secrets ----
 .env
 .env.*
+!.env.example
 *.pem
 
 # ---- IDE / OS ----
