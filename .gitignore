@@ -1,0 +1,45 @@
+# ---- Terraform ----
+**/.terraform/*
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ---- Databricks ----
+.databricks/
+.databricks-login.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ---- Environment / secrets ----
+.env
+.env.*
+*.pem
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
