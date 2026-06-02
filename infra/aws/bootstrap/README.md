@@ -66,7 +66,7 @@ terraform {
   backend "s3" {
     bucket         = "fintelliguard-tfstate"   # bootstrap output: state_bucket
     key            = "aws/terraform.tfstate"   # unique per layer
-    region         = "us-east-1"               # bootstrap output: region
+    region         = "eu-central-1"            # bootstrap output: region
     dynamodb_table = "fintelliguard-tflock"    # bootstrap output: lock_table
     encrypt        = true
   }

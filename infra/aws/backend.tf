@@ -7,7 +7,7 @@ terraform {
   backend "s3" {
     bucket         = "fintelliguard-tfstate"
     key            = "infra/aws/terraform.tfstate"
-    region         = "us-east-1"
+    region         = "eu-central-1"
     dynamodb_table = "fintelliguard-tflock"
     encrypt        = true
   }
