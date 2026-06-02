@@ -37,12 +37,11 @@ In CI these come from the secret store (GitHub Actions OIDC → Secrets Manager 
 
 ## Networking note (data-plane SG)
 
-`infra/aws` currently exposes `lambda`, `msk`, and `endpoints` security groups. This
-layer consumes the VPC + private subnets directly and, for the data-plane SG, defaults
-to the **endpoints SG** (which fronts the interface / Databricks PrivateLink endpoints).
-Before deploy, either set `workspace_security_group_ids` explicitly or add a dedicated
-Databricks data-plane SG to `infra/aws` — Databricks requires intra-SG all-traffic plus
-egress on 443/3306/6666. This is a deploy-phase decision; the build validates either way.
+This layer consumes the VPC + private subnets and the dedicated **Databricks data-plane
+security group** from `infra/aws` (output `databricks_data_plane_sg_id`). That SG follows
+the Databricks customer-managed VPC + back-end PrivateLink rules — intra-SG all-traffic
+plus egress on 443 / 3306 / 6666 / 8443-8451. Override with `workspace_security_group_ids`
+only if you need a different SG.
 
 ## Variables
 
@@ -57,7 +56,7 @@ egress on 443/3306/6666. This is a deploy-phase decision; the build validates ei
 | `databricks_client_secret` | string (sensitive) | `""` | OAuth SP secret. Supply via env / Secrets Manager. |
 | `workspace_name` | string | `""` | Workspace name; empty = `<project>-<environment>`. |
 | `root_bucket_name` | string | `""` | DBFS root bucket; empty = `<project>-<environment>-dbfs-root-<account_id>`. |
-| `workspace_security_group_ids` | list(string) | `[]` | Data-plane SGs; empty = infra/aws endpoints SG (see note). |
+| `workspace_security_group_ids` | list(string) | `[]` | Override data-plane SGs; empty = infra/aws dedicated Databricks data-plane SG. |
 | `pricing_tier` | string | `PREMIUM` | Required for Unity Catalog. |
 | `metastore_name` | string | `""` | Metastore name; empty = `<project>-<aws_region>`. |
 | `metastore_storage_root` | string | `""` | Optional metastore-level S3 storage root; empty = omit. |

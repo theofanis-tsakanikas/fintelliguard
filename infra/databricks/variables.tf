@@ -57,7 +57,7 @@ variable "root_bucket_name" {
 }
 
 variable "workspace_security_group_ids" {
-  description = "Data-plane security group ids for the customer-managed VPC. Empty = consume the infra/aws endpoints SG from remote state (see README networking note)."
+  description = "Override data-plane security group ids for the customer-managed VPC. Empty = consume the dedicated Databricks data-plane SG from infra/aws remote state."
   type        = list(string)
   default     = []
 }

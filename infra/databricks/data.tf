@@ -26,7 +26,7 @@ locals {
   vpc_id     = local.aws.vpc_id
   subnet_ids = local.aws.private_subnet_ids
 
-  # Data-plane SGs: operator override, else the infra/aws SG that fronts the
-  # interface/PrivateLink endpoints (see README networking note).
-  workspace_security_group_ids = length(var.workspace_security_group_ids) > 0 ? var.workspace_security_group_ids : [local.aws.endpoints_security_group_id]
+  # Data-plane SGs: operator override, else the dedicated Databricks data-plane SG
+  # provisioned in infra/aws (SCC / back-end PrivateLink rules).
+  workspace_security_group_ids = length(var.workspace_security_group_ids) > 0 ? var.workspace_security_group_ids : [local.aws.databricks_data_plane_sg_id]
 }

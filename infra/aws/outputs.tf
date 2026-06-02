@@ -37,6 +37,11 @@ output "endpoints_security_group_id" {
   value       = aws_security_group.endpoints.id
 }
 
+output "databricks_data_plane_sg_id" {
+  description = "Databricks customer-managed VPC data-plane SG (SCC / back-end PrivateLink)."
+  value       = aws_security_group.databricks_data_plane.id
+}
+
 # ---- KMS / S3 ----------------------------------------------------------------
 output "kms_key_arn" {
   description = "Customer-managed key ARN (S3, Secrets, MSK at rest)."

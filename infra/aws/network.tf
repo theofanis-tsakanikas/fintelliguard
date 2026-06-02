@@ -159,6 +159,72 @@ resource "aws_security_group" "msk" {
   tags = { Name = "${local.name}-msk-sg" }
 }
 
+# Databricks data-plane SG for the customer-managed VPC with back-end PrivateLink
+# (secure cluster connectivity). Rules follow the Databricks customer-managed VPC docs:
+#   - intra-SG all-traffic ingress AND egress (cluster node-to-node on all ports)
+#   - egress 443  : control plane / SCC relay / cloud APIs / artifact + log storage
+#   - egress 3306 : regional Databricks metastore
+#   - egress 6666 : back-end PrivateLink secure cluster connectivity
+#   - egress 8443-8451 : internal services (8443 control-plane API, 8444 UC lineage,
+#                        8445, 8446-8451 reserved) — contiguous range per docs
+# Omitted as not applicable here (per docs): 53 (custom DNS), 2443 (FIPS/compliance
+# profile), 5432 (Lakebase). Add them if those features are enabled.
+resource "aws_security_group" "databricks_data_plane" {
+  name        = "${local.name}-databricks-dataplane"
+  description = "Databricks customer-managed VPC data-plane SG (SCC / back-end PrivateLink)"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description = "Intra-SG: all traffic between cluster nodes in this SG"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    self        = true
+  }
+
+  egress {
+    description = "Intra-SG: all traffic between cluster nodes in this SG"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    self        = true
+  }
+
+  egress {
+    description = "Control plane / SCC relay / cloud APIs / artifact + log storage"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Regional Databricks metastore"
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Back-end PrivateLink secure cluster connectivity"
+    from_port   = 6666
+    to_port     = 6666
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Databricks internal services over PrivateLink (8443-8451)"
+    from_port   = 8443
+    to_port     = 8451
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { Name = "${local.name}-databricks-dataplane-sg" }
+}
+
 # =============================================================================
 # Interface VPC endpoints — keep Secrets Manager / KMS traffic off the internet,
 # and (optionally) reach Mosaic Model Serving over Databricks PrivateLink.
