@@ -57,13 +57,13 @@ the model only via `get_fraud_score()` against the Mosaic Model Serving endpoint
 > _Placeholder — expanded as layers land._
 
 ```bash
-# Python tooling
+# Python tooling (pyspark pipeline tests need a JDK — Java 8/11/17)
 python3 -m venv .venv && source .venv/bin/activate
-pip install ruff pytest
+pip install -e ".[dev]"
 
 make fmt     # format
 make lint    # ruff check
-make test    # pytest
+make test    # pytest (incl. local-Spark pipeline tests)
 
 # One-time: provision the Terraform remote-state backend
 cd infra/aws/bootstrap && terraform init && terraform apply

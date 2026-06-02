@@ -16,6 +16,11 @@ override.tf.json
 .databricks/
 .databricks-login.json
 
+# ---- Spark (local test artifacts) ----
+spark-warehouse/
+metastore_db/
+derby.log
+
 # ---- Python ----
 __pycache__/
 *.py[cod]
