@@ -13,6 +13,10 @@ dev = [
     "pyspark==3.5.3",
     "pandas==2.2.2",
     "pyarrow==15.0.2",
+    # ml/training. XGBoost needs the OpenMP runtime on macOS: `brew install libomp`.
+    "xgboost==2.1.1",
+    "scikit-learn==1.5.2",
+    "mlflow-skinny==2.16.2",
 ]
 
 [tool.ruff]

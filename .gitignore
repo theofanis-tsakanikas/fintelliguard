@@ -21,6 +21,9 @@ spark-warehouse/
 metastore_db/
 derby.log
 
+# ---- MLflow (local file store) ----
+mlruns/
+
 # ---- Python ----
 __pycache__/
 *.py[cod]
