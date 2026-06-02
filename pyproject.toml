@@ -32,6 +32,7 @@ select = ["E", "F", "I", "UP", "B", "C4", "N"]
 [tool.ruff.lint.per-file-ignores]
 # `functions as F` / `types as T` is the universal PySpark idiom.
 "pipelines/**" = ["N812"]
+"agents/databricks/**" = ["N812"]
 
 [tool.ruff.format]
 quote-style = "double"
