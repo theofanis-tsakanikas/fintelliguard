@@ -8,8 +8,9 @@ requires-python = ">=3.9"
 # Local dev/test tooling. PySpark needs a JDK (Java 8/11/17) on the machine — see
 # pipelines/README.md. pandas + pyarrow back Spark's applyInPandas (gold features).
 dev = [
-    "ruff",
-    "pytest",
+    # Pinned so CI's ruff format/lint matches local exactly.
+    "ruff==0.15.15",
+    "pytest==8.4.2",
     "pyspark==3.5.3",
     "pandas==2.2.2",
     "pyarrow==15.0.2",

@@ -67,9 +67,15 @@ def spark():
 
 @pytest.fixture(scope="session")
 def sample_lakehouse(spark):
-    """Create sample gold/silver tables the dashboard panels query."""
-    spark.sql("CREATE DATABASE IF NOT EXISTS gold")
-    spark.sql("CREATE DATABASE IF NOT EXISTS silver")
+    """Create sample gold/silver tables the dashboard panels query.
+
+    Databases get an explicit tmp LOCATION so managed-table data never lands in (or
+    collides with) the repo's default ./spark-warehouse — robust even when an earlier
+    Spark test already created the shared session (whose warehouse.dir we can't change).
+    """
+    db_root = tempfile.mkdtemp(prefix="fg-dash-db-")
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS gold LOCATION '{db_root}/gold'")
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS silver LOCATION '{db_root}/silver'")
 
     # gold.txn_features_realtime — EXACT canonical 15-feature schema.
     feature_rows = [

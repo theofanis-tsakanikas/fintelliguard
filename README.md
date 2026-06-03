@@ -1,5 +1,7 @@
 # FintelliGuard
 
+[![CI](https://github.com/theofanis-tsakanikas/fintelliguard/actions/workflows/ci.yml/badge.svg)](https://github.com/theofanis-tsakanikas/fintelliguard/actions/workflows/ci.yml)
+
 Real-time financial fraud detection & compliance platform.
 *AWS Bedrock · Databricks Mosaic AI · Kafka/MSK · Spark · Terraform · LangGraph*
 

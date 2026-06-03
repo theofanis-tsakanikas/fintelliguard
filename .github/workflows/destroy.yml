@@ -1,0 +1,77 @@
+name: Destroy (guarded)
+
+# GATED + DEFERRED: manual dispatch only, with a TYPED confirmation. You must type the
+# exact environment name to proceed. Tears down in REVERSE order; the state backend
+# (infra/aws/bootstrap) is intentionally NOT destroyed here.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to destroy
+        type: choice
+        options: [dev, prod]
+        required: true
+      confirm:
+        description: Type the EXACT environment name to confirm destruction
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  destroy:
+    name: Destroy all layers (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      AWS_REGION: eu-central-1
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      TF_VAR_databricks_account_id: ${{ secrets.DATABRICKS_ACCOUNT_ID }}
+      TF_VAR_databricks_client_id: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      TF_VAR_databricks_client_secret: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+    steps:
+      - name: Typed-confirmation guard
+        run: |
+          if [ "${{ inputs.confirm }}" != "${{ inputs.environment }}" ]; then
+            echo "::error::confirmation '${{ inputs.confirm }}' does not match environment '${{ inputs.environment }}'"
+            exit 1
+          fi
+          echo "Confirmed destruction of '${{ inputs.environment }}'."
+
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: eu-central-1
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - uses: databricks/setup-cli@main
+
+      - name: 1) infra/bundles
+        working-directory: infra/bundles
+        run: databricks bundle destroy -t ${{ inputs.environment }} --auto-approve
+
+      - name: 2) agents/bedrock/terraform
+        working-directory: agents/bedrock/terraform
+        run: |
+          terraform init -input=false
+          terraform destroy -auto-approve -input=false
+
+      - name: 3) infra/databricks
+        working-directory: infra/databricks
+        run: |
+          terraform init -input=false
+          terraform destroy -auto-approve -input=false
+
+      - name: 4) infra/aws
+        working-directory: infra/aws
+        run: |
+          terraform init -input=false
+          terraform destroy -auto-approve -input=false
