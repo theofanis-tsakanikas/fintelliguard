@@ -1,0 +1,111 @@
+{
+  "uid": "fintelliguard-fraud-overview",
+  "title": "FintelliGuard — Fraud Overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "utc",
+  "tags": ["fintelliguard", "fraud"],
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "type": "custom",
+        "label": "Environment",
+        "query": "dev,prod",
+        "current": { "text": "dev", "value": "dev" },
+        "options": [
+          { "text": "dev", "value": "dev", "selected": true },
+          { "text": "prod", "value": "prod", "selected": false }
+        ],
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Fraud score distribution",
+      "type": "barchart",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT round(fraud_score, 1) AS score_bucket, count(*) AS transactions FROM gold.scored_transactions WHERE $__timeFilter(event_time) GROUP BY round(fraud_score, 1) ORDER BY score_bucket"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Decision mix",
+      "type": "piechart",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT decision_hint, count(*) AS n FROM gold.scored_transactions WHERE $__timeFilter(event_time) GROUP BY decision_hint ORDER BY n DESC"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Tier-2 escalation rate",
+      "type": "stat",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT count_if(decision_hint IN ('review', 'block')) / count(*) AS tier2_rate FROM gold.scored_transactions WHERE $__timeFilter(event_time)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Avg amount z-score by MCC risk tier",
+      "type": "table",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT mcc_risk_tier, round(avg(amount_zscore), 3) AS avg_amount_zscore, count(*) AS n FROM gold.txn_features_realtime GROUP BY mcc_risk_tier ORDER BY mcc_risk_tier"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Top merchant risk",
+      "type": "table",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT merchant_id, count_if(decision_hint = 'block') AS blocks, count(*) AS scored FROM gold.scored_transactions WHERE $__timeFilter(event_time) GROUP BY merchant_id ORDER BY blocks DESC LIMIT 10"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Top country risk",
+      "type": "table",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT ip_country, count_if(decision_hint = 'block') AS blocks, count(*) AS scored FROM gold.scored_transactions WHERE $__timeFilter(event_time) GROUP BY ip_country ORDER BY blocks DESC LIMIT 10"
+        }
+      ]
+    }
+  ]
+}

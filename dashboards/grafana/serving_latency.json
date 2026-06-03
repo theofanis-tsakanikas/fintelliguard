@@ -1,0 +1,83 @@
+{
+  "uid": "fintelliguard-serving-latency",
+  "title": "FintelliGuard — Serving & Latency",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "utc",
+  "tags": ["fintelliguard", "serving"],
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "type": "custom",
+        "label": "Environment",
+        "query": "dev,prod",
+        "current": { "text": "dev", "value": "dev" },
+        "options": [
+          { "text": "dev", "value": "dev", "selected": true },
+          { "text": "prod", "value": "prod", "selected": false }
+        ],
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "get_fraud_score p99 latency",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p99",
+          "expr": "histogram_quantile(0.99, sum(rate(model_serving_request_duration_seconds_bucket{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[5m])) by (le))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "get_fraud_score p50 latency",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.50, sum(rate(model_serving_request_duration_seconds_bucket{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[5m])) by (le))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Request rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "req/s",
+          "expr": "sum(rate(model_serving_requests_total{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Served model version",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{model_version}}",
+          "expr": "max(model_serving_build_info{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}) by (model_version)"
+        }
+      ]
+    }
+  ]
+}

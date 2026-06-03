@@ -1,0 +1,11 @@
+# Grafana dashboard provisioning — load the JSON dashboards from disk.
+apiVersion: 1
+
+providers:
+  - name: fintelliguard
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards/fintelliguard
+      foldersFromFilesStructure: false

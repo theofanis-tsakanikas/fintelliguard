@@ -19,6 +19,8 @@ dev = [
     "mlflow-skinny==2.16.2",
     # agents/langgraph self-healing graph.
     "langgraph==0.2.39",
+    # dashboards/ provisioning YAML tests.
+    "pyyaml==6.0.3",
 ]
 
 [tool.ruff]

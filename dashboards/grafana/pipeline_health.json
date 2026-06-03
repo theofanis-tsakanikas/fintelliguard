@@ -1,0 +1,83 @@
+{
+  "uid": "fintelliguard-pipeline-health",
+  "title": "FintelliGuard — Pipeline Health",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "utc",
+  "tags": ["fintelliguard", "pipeline"],
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "type": "custom",
+        "label": "Environment",
+        "query": "dev,prod",
+        "current": { "text": "dev", "value": "dev" },
+        "options": [
+          { "text": "dev", "value": "dev", "selected": true },
+          { "text": "prod", "value": "prod", "selected": false }
+        ],
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "DLT pipeline status",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "pipeline up",
+          "expr": "max(dlt_pipeline_up{environment=\"$environment\", pipeline=\"fintelliguard-medallion\"})"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Kafka consumer lag",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{topic}}",
+          "expr": "max(kafka_consumergroup_lag{environment=\"$environment\", topic=\"txn.raw\"}) by (topic)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Silver ingestion throughput",
+      "type": "timeseries",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('MINUTE', event_time) AS minute, count(*) AS rows_ingested FROM silver.transactions_clean WHERE $__timeFilter(event_time) GROUP BY date_trunc('MINUTE', event_time) ORDER BY minute"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Quarantine counts by reason",
+      "type": "bargauge",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT reason, count(*) AS quarantined FROM gold.quarantine_events WHERE $__timeFilter(event_time) GROUP BY reason ORDER BY quarantined DESC"
+        }
+      ]
+    }
+  ]
+}

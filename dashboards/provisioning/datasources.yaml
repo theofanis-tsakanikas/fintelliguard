@@ -1,0 +1,28 @@
+# Grafana data source provisioning. NO secrets in this file — credentials are env
+# references (Grafana interpolates ${ENV} at load). Set them via the container env /
+# a secret store: DATABRICKS_HOST, DATABRICKS_SQL_HTTP_PATH, DATABRICKS_TOKEN,
+# PROMETHEUS_URL.
+apiVersion: 1
+
+datasources:
+  - name: FintelliGuard Databricks SQL
+    uid: fintelliguard-databricks
+    type: grafana-databricks-datasource
+    access: proxy
+    isDefault: false
+    jsonData:
+      host: ${DATABRICKS_HOST}
+      httpPath: ${DATABRICKS_SQL_HTTP_PATH}
+      catalog: fintelliguard
+      authType: token
+    secureJsonData:
+      token: ${DATABRICKS_TOKEN}
+
+  - name: FintelliGuard Prometheus
+    uid: fintelliguard-prometheus
+    type: prometheus
+    access: proxy
+    isDefault: true
+    url: ${PROMETHEUS_URL}
+    jsonData:
+      httpMethod: POST

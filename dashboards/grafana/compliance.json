@@ -1,0 +1,83 @@
+{
+  "uid": "fintelliguard-compliance",
+  "title": "FintelliGuard — Compliance (Tier-2)",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "utc",
+  "tags": ["fintelliguard", "compliance", "bedrock"],
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "type": "custom",
+        "label": "Environment",
+        "query": "dev,prod",
+        "current": { "text": "dev", "value": "dev" },
+        "options": [
+          { "text": "dev", "value": "dev", "selected": true },
+          { "text": "prod", "value": "prod", "selected": false }
+        ],
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Verdict counts",
+      "type": "piechart",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT verdict, count(*) AS n FROM gold.case_verdicts WHERE $__timeFilter(event_time) GROUP BY verdict ORDER BY n DESC"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Guardrail block rate",
+      "type": "stat",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT count_if(guardrail_blocked) AS guardrail_blocks, count(*) AS verdicts FROM gold.case_verdicts WHERE $__timeFilter(event_time)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Tier-2 verdict latency p99",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p99",
+          "expr": "histogram_quantile(0.99, sum(rate(bedrock_verdict_duration_seconds_bucket{environment=\"$environment\"}[5m])) by (le))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Verdicts per minute",
+      "type": "timeseries",
+      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('MINUTE', event_time) AS minute, count(*) AS verdicts FROM gold.case_verdicts WHERE $__timeFilter(event_time) GROUP BY date_trunc('MINUTE', event_time) ORDER BY minute"
+        }
+      ]
+    }
+  ]
+}
