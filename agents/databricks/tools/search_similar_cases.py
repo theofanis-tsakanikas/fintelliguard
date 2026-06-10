@@ -60,4 +60,4 @@ class SimilarCaseSearch:
 def _format_results(raw: dict[str, Any]) -> list[dict[str, Any]]:
     columns = [col["name"] for col in raw.get("manifest", {}).get("columns", [])]
     rows = raw.get("result", {}).get("data_array") or []
-    return [dict(zip(columns, row)) for row in rows]
+    return [dict(zip(columns, row, strict=True)) for row in rows]

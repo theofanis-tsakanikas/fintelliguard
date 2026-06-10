@@ -34,7 +34,7 @@ def test_chunks_respect_max_size_and_carry_metadata():
 
 def test_consecutive_chunks_overlap():
     chunks = chunk_text(_TEXT, doc_id="d", source="s", regulation="r", max_chars=300, overlap=50)
-    for earlier, later in zip(chunks, chunks[1:]):
+    for earlier, later in zip(chunks, chunks[1:], strict=False):
         assert later.start_char < earlier.end_char  # overlapping windows
 
 

@@ -2,7 +2,7 @@
 name = "fintelliguard"
 version = "0.0.0"
 description = "Real-time financial fraud detection & compliance platform"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 
 [project.optional-dependencies]
 # Local dev/test tooling. PySpark needs a JDK (Java 8/11/17) on the machine — see
@@ -12,6 +12,8 @@ dev = [
     "ruff==0.15.15",
     "pytest==8.4.2",
     "pyspark==3.5.3",
+    # pyspark 3.5 imports distutils (removed in Python 3.12) — setuptools shims it.
+    "setuptools",
     "pandas==2.2.2",
     "pyarrow==15.0.2",
     # ml/training. XGBoost needs the OpenMP runtime on macOS: `brew install libomp`.
@@ -19,13 +21,19 @@ dev = [
     "scikit-learn==1.5.2",
     "mlflow-skinny==2.16.2",
     # agents/langgraph self-healing graph.
-    "langgraph==0.2.39",
+    "langgraph==1.0.2",
     # dashboards/ provisioning YAML tests.
     "pyyaml==6.0.3",
 ]
 
+[tool.setuptools.packages.find]
+# Explicit discovery: the repo is flat-layout with several top-level dirs that
+# are NOT Python packages (infra/, dashboards/, docs/) — without this, modern
+# setuptools refuses the editable install with "Multiple top-level packages".
+include = ["agents*", "ml*", "pipelines*", "simulator*"]
+
 [tool.ruff]
-target-version = "py39"
+target-version = "py311"
 line-length = 100
 extend-exclude = [".venv", "infra"]
 

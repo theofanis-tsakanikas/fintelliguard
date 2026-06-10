@@ -8,8 +8,9 @@ with mocks. `target_stage` is pure.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from ml.training.promote import PromotionDecision
 from ml.training.train import TrainConfig, TrainingResult

@@ -64,7 +64,7 @@ See [`docs/NARRATIVE.md`](docs/NARRATIVE.md) for the *why*, and
 | Data platform | Databricks DLT · Unity Catalog · Delta Lake |
 | ML training | XGBoost · MLflow · Mosaic AI Feature Store |
 | ML serving | Mosaic AI Model Serving (REST, autoscale) |
-| Real-time AI (Tier 2) | AWS Bedrock Agent · Knowledge Bases · Guardrails · Claude (Haiku→Sonnet) |
+| Real-time AI (Tier 2) | AWS Bedrock Agent · Knowledge Bases · Guardrails · Claude (Haiku 4.5 → Sonnet 4.6) |
 | Investigation AI (Tier 3) | Mosaic AI Agent Framework · Vector Search · Genie · Agent Evaluation |
 | Self-healing | LangGraph Supervisor + Medic · LangSmith tracing |
 | IaC | Terraform (3 isolated layers) · Databricks Asset Bundles |
@@ -128,7 +128,7 @@ running production system — but it is engineered to deploy from this state.
 
 ## Run the tests locally
 
-Requires **Python 3.11** (3.9+ works), **Java 17** (for the PySpark tests), and the
+Requires **Python 3.11+**, **Java 17** (for the PySpark tests), and the
 OpenMP runtime for XGBoost (`brew install libomp` on macOS; bundled on Linux).
 
 ```bash

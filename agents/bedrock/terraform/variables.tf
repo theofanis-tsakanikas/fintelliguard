@@ -17,9 +17,9 @@ variable "environment" {
 }
 
 variable "foundation_model" {
-  description = "Bedrock foundation model id for the agent. Dev uses Claude Haiku; Sonnet for final eval."
+  description = "Bedrock foundation model id for the agent. Dev uses Claude Haiku 4.5; switch to anthropic.claude-sonnet-4-6 for final evaluation."
   type        = string
-  default     = "anthropic.claude-3-haiku-20240307-v1:0"
+  default     = "anthropic.claude-haiku-4-5"
 }
 
 variable "embedding_model" {

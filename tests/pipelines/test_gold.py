@@ -45,7 +45,7 @@ def _expected_realtime():
     """Pure-python expected features, replaying each card's history in order."""
     by_card: dict[str, list[dict]] = {}
     for row in _STREAM_ROWS:
-        rec = dict(zip(_KEYS, row))
+        rec = dict(zip(_KEYS, row, strict=True))
         by_card.setdefault(rec["card_hash"], []).append(rec)
 
     expected = {}
@@ -158,7 +158,7 @@ def test_gold_training_schema_label_and_parity(spark):
         modal_addr2=Counter(r[8] for r in _IEEE_ROWS).most_common(1)[0][0],
     )
     for row in _IEEE_ROWS:
-        rec = dict(zip(_IEEE_KEYS, row))
+        rec = dict(zip(_IEEE_KEYS, row, strict=True))
         expected = map_row(rec, ctx).features.as_dict()
         produced = gold[rec["TransactionID"]]
         assert produced["is_fraud"] == rec["isFraud"]

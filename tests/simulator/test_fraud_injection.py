@@ -33,7 +33,7 @@ def test_velocity_spike_clusters_timestamps_for_one_card():
     busiest = max(by_card.values(), key=len)
     assert len(busiest) >= 3
     busiest.sort()
-    deltas = [(b - a).total_seconds() for a, b in zip(busiest, busiest[1:])]
+    deltas = [(b - a).total_seconds() for a, b in zip(busiest, busiest[1:], strict=False)]
     # Each consecutive pair for the card is seconds apart — a tight cluster.
     assert max(deltas) <= 15.0
 

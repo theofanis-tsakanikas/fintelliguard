@@ -13,8 +13,9 @@ Idempotency: a one-shot remediation is not repeated for an incident already acte
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from agents.langgraph.config import HealingConfig
 from agents.langgraph.state import (

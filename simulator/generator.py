@@ -20,15 +20,15 @@ import hashlib
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from enum import Enum
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from random import Random
 
 from .config import SimulatorConfig
 from .schema import Transaction
 
 # Fixed virtual clock origin — keeps runs reproducible by seed alone.
-DEFAULT_START = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+DEFAULT_START = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 # Geography pool (ISO 3166-1 alpha-2). Skewed toward a few "home" markets.
 COUNTRIES: tuple[str, ...] = ("DE", "US", "GB", "FR", "ES", "IT", "NL", "BR", "IN", "NG")
@@ -50,7 +50,7 @@ MCC_CODES: tuple[str, ...] = (
 UNUSUAL_HOURS: tuple[int, ...] = (0, 1, 2, 3, 4, 5)
 
 
-class FraudPattern(str, Enum):
+class FraudPattern(StrEnum):
     """The injected fraud archetypes."""
 
     VELOCITY_SPIKE = "velocity_spike"

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 import urllib.request
-from typing import Any, Callable, Protocol
+from collections.abc import Callable
+from typing import Any, Protocol
 
 from errors import FeatureStoreError, FraudScoreError
 

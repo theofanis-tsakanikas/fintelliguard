@@ -108,7 +108,7 @@ class FraudScorer:
         self, features: dict[str, Any], contributions: np.ndarray
     ) -> list[dict[str, Any]]:
         ranked = sorted(
-            zip(FEATURE_NAMES, contributions),
+            zip(FEATURE_NAMES, contributions, strict=True),
             key=lambda pair: abs(pair[1]),
             reverse=True,
         )

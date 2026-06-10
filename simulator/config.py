@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class SinkType(str, Enum):
+class SinkType(StrEnum):
     """Where generated transactions are written."""
 
     LOCAL = "local"

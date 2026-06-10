@@ -46,7 +46,7 @@ fintelliguard/
 | Data platform | Databricks DLT · Unity Catalog · Delta Lake |
 | ML training | XGBoost · MLflow · Mosaic AI Feature Store |
 | ML serving | Mosaic AI Model Serving (REST, autoscale) |
-| Real-time AI (Tier 2) | AWS Bedrock Agent · Knowledge Bases · Guardrails · Claude (Haiku→Sonnet) |
+| Real-time AI (Tier 2) | AWS Bedrock Agent · Knowledge Bases · Guardrails · Claude (Haiku 4.5 → Sonnet 4.6) |
 | Investigation AI (Tier 3) | Mosaic AI Agent Framework · Vector Search · Genie · Agent Evaluation |
 | Self-healing | LangGraph Supervisor + Medic · LangSmith tracing |
 | IaC | Terraform (3 isolated layers) · Databricks Asset Bundles |
@@ -79,7 +79,7 @@ fintelliguard/
 
 - Databricks clusters: auto-terminate after 30 min idle (set in cluster config, not manually).
 - AWS MSK: use local Kafka (Docker) in dev. Provision MSK only for integration testing and final demo.
-- Bedrock: use `claude-haiku` in dev. Switch to `claude-sonnet` for final evaluation only.
+- Bedrock: use `anthropic.claude-haiku-4-5` in dev. Switch to `anthropic.claude-sonnet-4-6` for final evaluation only.
 - Always `terraform plan` before `apply`. Never `apply` without reviewing the plan.
 - `terraform destroy` per layer when not actively working.
 

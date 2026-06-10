@@ -112,7 +112,8 @@ def train_model(frame: pd.DataFrame, config: TrainConfig | None = None) -> Train
 
     metrics = _evaluate(model, splits.x_test, splits.y_test, config.threshold)
     importance = {
-        name: float(score) for name, score in zip(FEATURE_COLUMNS, model.feature_importances_)
+        name: float(score)
+        for name, score in zip(FEATURE_COLUMNS, model.feature_importances_, strict=True)
     }
 
     mlflow.set_tracking_uri(config.tracking_uri)
