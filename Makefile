@@ -8,8 +8,10 @@ PYTEST  := $(if $(wildcard $(VENV)/bin/pytest),$(VENV)/bin/pytest,pytest)
 # Terraform layer to target for plan/apply, e.g. `make plan TF_DIR=infra/aws/bootstrap`
 TF_DIR  ?= infra/aws/bootstrap
 
+PY      := $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python)
+
 .DEFAULT_GOAL := help
-.PHONY: help fmt lint test plan apply
+.PHONY: help fmt lint test guardrail-scan govern-docs plan apply
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -24,6 +26,12 @@ lint: ## Lint Python with ruff (format check + rules)
 
 test: ## Run the test suite
 	$(PYTEST)
+
+guardrail-scan: ## Run the guardrail red-team coverage gate
+	$(PY) -m agents.bedrock.guardrails.evaluate
+
+govern-docs: ## Regenerate the model/dataset cards + AI-Act technical docs
+	$(PY) -m ml.governance.generate
 
 # --- Terraform (stubs — wired up as IaC layers land) -------------------------
 # Usage: make plan  TF_DIR=infra/aws

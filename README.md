@@ -91,9 +91,23 @@ See [`docs/NARRATIVE.md`](docs/NARRATIVE.md) for the *why*, and
   KMS, private VPC endpoints for the cross-cloud call, secrets only in AWS Secrets
   Manager / Databricks secret scopes, and **Guardrails** (PII redaction + grounding) on
   every regulated verdict.
+- **Proven guardrails, not just configured.** A labelled **red-team set** (prompt-injection,
+  jailbreak, out-of-scope, PII-leak) is run against the guardrail policy in CI — 16/16
+  adversarial probes blocked, 0 benign false positives — and the test parses `guardrail.tf`
+  so removing a policy class fails the build.
+- **Verdict acceptance gate.** Every Tier-2 compliance verdict passes five deterministic
+  checks before reaching an analyst — schema, no raw PII, **grounding** (cited regulations
+  must exist in the retrieved context), **faithfulness** (drivers must be the model's actual
+  `top_features`), and decision consistency. The hard floor under the LLM.
+- **Drift-monitored.** PSI + two-sample KS per feature with alert thresholds catch silent
+  distribution shift before it degrades the score.
+- **Regulated-AI docs generated from the code.** Model card, dataset card, and an
+  **EU-AI-Act Annex IV** technical document are rendered from the actual features,
+  thresholds, and guardrail coverage — CI fails if they drift. See
+  [docs/governance/](docs/governance/README.md).
 - **IaC only.** Three isolated Terraform layers with per-layer remote state + Databricks
   Asset Bundles. No console deployments.
-- **163 local tests**, green in CI on every PR.
+- **199 local tests**, green in CI on every PR.
 
 ## Testing philosophy (honest)
 

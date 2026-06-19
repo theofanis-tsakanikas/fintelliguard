@@ -43,6 +43,12 @@ jobs:
       - name: Pytest (full suite)
         run: pytest -q
 
+      - name: Responsible-AI gates (guardrail red-team · verdict eval · docs in sync)
+        run: |
+          set -euo pipefail
+          python -m agents.bedrock.guardrails.evaluate
+          python -m ml.governance.generate --check
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:

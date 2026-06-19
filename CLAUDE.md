@@ -69,6 +69,8 @@ fintelliguard/
 
 **Bedrock output is regulated.** Every Tier-2 verdict passes through Guardrails (PII redaction + hallucination guard) and is traced in LangSmith for audit. No verdict ships without grounding in the Knowledge Base regulatory text.
 
+**Responsible-AI gates are deterministic and CI-enforced** (see `docs/governance/`). The guardrail is proven against a labelled red-team set (`agents/bedrock/guardrails/` — block-rate must stay 100%, and the coverage test parses `guardrail.tf`, so removing a policy class fails CI). Every verdict must pass the deterministic verdict gate (`agents/bedrock/eval/judge.py`: schema, no-PII, grounding, faithfulness, decision). The model/dataset cards + EU-AI-Act doc are **generated from the code** (`python -m ml.governance.generate`) — edit a threshold and run `make govern-docs`, or CI's `--check` fails. Feature drift is monitored by `ml/monitoring/drift.py` (PSI/KS).
+
 **Copilot tool routing.** The copilot (Agent Framework) chooses between Genie (NL→SQL, precise facts), Vector Search (semantic similar-case retrieval), and `get_fraud_score()`. Tool descriptions are first-class engineering — write them carefully. Routing quality is measured by Mosaic AI Agent Evaluation.
 
 **MLflow promotion policy.** Staging→Production only when AUC-ROC ≥ 0.92 AND fraud-class precision ≥ 0.85 on held-out test. Document metrics in the MLflow run before promoting.
