@@ -26,15 +26,21 @@ fintelliguard/
 ├── ml/
 │   ├── training/     # MLflow + XGBoost training (IEEE-CIS)
 │   ├── features/     # Feature Store defs + adapters (adapter_stream.py, adapter_ieee.py)
-│   └── serving/      # Mosaic AI Model Serving endpoint config
+│   ├── serving/      # Mosaic AI Model Serving endpoint config
+│   ├── monitoring/   # Feature-drift detection (PSI + two-sample KS)
+│   └── governance/   # Generates model/dataset cards + EU-AI-Act Annex IV doc from the code
 ├── agents/
-│   ├── bedrock/      # Bedrock Agent + Knowledge Base + Guardrails + action groups
+│   ├── bedrock/      # Bedrock Agent + KB + Guardrails + action groups
+│   │   ├── guardrails/  # Guardrail policy model + red-team set + coverage gate
+│   │   └── eval/        # Verdict acceptance gate (schema·PII·grounding·faithfulness·decision)
 │   ├── databricks/   # Mosaic copilot (Agent Framework) + Vector Search + Agent Evaluation
 │   └── langgraph/    # Self-healing Supervisor + Medic
 ├── simulator/        # Python transaction generator (~500 txns/sec)
 ├── dashboards/       # Grafana dashboard JSON exports
-├── tests/            # Unit + integration tests per layer
-└── docs/             # Architecture decisions, narrative, diagrams
+├── tests/            # Unit + integration tests per layer (199, incl. the Responsible-AI gates)
+└── docs/
+    ├── governance/   # Generated regulated-AI docs (model/dataset cards, guardrail coverage, AI-Act)
+    └── ...           # Architecture decisions, narrative, diagrams
 ```
 
 ## Stack

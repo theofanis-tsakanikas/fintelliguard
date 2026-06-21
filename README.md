@@ -114,10 +114,14 @@ See [`docs/NARRATIVE.md`](docs/NARRATIVE.md) for the *why*, and
 Pure logic is **unit-tested locally with the real engines** — local **PySpark** for the
 DLT transforms and dashboard SQL, real **XGBoost + MLflow** for training/serving, real
 **LangGraph** for self-healing, real mocked-client bridges for the Bedrock Lambda and
-Vector Search. Infrastructure is **offline-validated** (`terraform validate` per layer,
-`databricks bundle validate` schema) with no cloud calls. **Cloud execution is deferred**
-to a dedicated deploy phase — see [`docs/DEPLOY.md`](docs/DEPLOY.md). A reviewer can clone
-this repo and run the entire suite on a laptop.
+Vector Search. The **Responsible-AI gates are tested too**: the guardrail red-team
+(adversarial probes must be blocked, benign ones must not), the verdict acceptance gate
+(each adversarial verdict rejected on the right check), the drift detector, and the
+generated AI-Act docs (`--check` must match the code). Infrastructure is
+**offline-validated** (`terraform validate` per layer, `databricks bundle validate`
+schema) with no cloud calls. **Cloud execution is deferred** to a dedicated deploy phase —
+see [`docs/DEPLOY.md`](docs/DEPLOY.md). A reviewer can clone this repo and run the entire
+suite on a laptop.
 
 ## Business impact
 
@@ -149,9 +153,11 @@ OpenMP runtime for XGBoost (`brew install libomp` on macOS; bundled on Linux).
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-make test        # pytest — full suite (local Spark + XGBoost + MLflow + LangGraph)
-make lint        # ruff check
-make fmt         # ruff format
+make test            # pytest — full suite (local Spark + XGBoost + MLflow + LangGraph)
+make lint            # ruff check
+make fmt             # ruff format
+make guardrail-scan  # run the guardrail red-team coverage gate
+make govern-docs     # regenerate the model/dataset cards + AI-Act technical docs
 ```
 
 Offline-validate the infrastructure (no cloud creds needed):
@@ -172,13 +178,18 @@ cd infra/bundles && databricks bundle validate -t dev
 | [`ml/features/`](ml/features/) | Canonical 15-feature schema + stream/IEEE adapters (parity) |
 | [`ml/training/`](ml/training/) | XGBoost + MLflow + promotion gate (AUC ≥ 0.92 ∧ precision ≥ 0.85) |
 | [`ml/serving/`](ml/serving/) | `get_fraud_score()` scorer + MLflow pyfunc endpoint |
+| [`ml/monitoring/`](ml/monitoring/) | Feature-drift detection (PSI + two-sample KS), NumPy-only |
+| [`ml/governance/`](ml/governance/) | Generates the model/dataset cards + EU-AI-Act Annex IV doc from the code |
 | [`agents/bedrock/`](agents/bedrock/) | Tier-2: action-group Lambda + agent/KB/guardrail Terraform |
+| [`agents/bedrock/guardrails/`](agents/bedrock/guardrails/) | Guardrail policy model + labelled red-team set + coverage gate |
+| [`agents/bedrock/eval/`](agents/bedrock/eval/) | Verdict acceptance gate (schema · no-PII · grounding · faithfulness · decision) |
 | [`agents/databricks/`](agents/databricks/) | Tier-3: copilot tools + agent + eval harness |
 | [`agents/langgraph/`](agents/langgraph/) | Self-healing Supervisor + Medic |
 | [`simulator/`](simulator/) | ~500 txns/sec synthetic generator with fraud injection |
 | [`dashboards/`](dashboards/) | Grafana dashboards (JSON) + data source provisioning |
 | [`.github/workflows/`](.github/workflows/) | CI (PR validation) + gated bootstrap/deploy/destroy |
 | [`docs/`](docs/) | Narrative, plan, data flow, features, integration contracts, deploy runbook |
+| [`docs/governance/`](docs/governance/README.md) | Generated regulated-AI docs: model/dataset cards, guardrail coverage, AI-Act Annex IV |
 
 ## Docs
 
