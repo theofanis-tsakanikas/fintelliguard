@@ -7,6 +7,8 @@ module is import/lint-validated only (see pipelines/README.md).
 
 from __future__ import annotations
 
+import os
+
 import dlt
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -17,7 +19,14 @@ from . import bronze_transforms
 spark = SparkSession.getActiveSession()
 
 KAFKA_TOPIC = "txn.raw"
-IEEE_RAW_PATH = "s3://fintelliguard-raw/raw/ieee-cis/"
+
+# The raw IEEE-CIS location is env-driven so it matches the Terraform-provisioned bucket
+# (`fintelliguard-raw-<account_id>`, exposed as the `raw_bucket_name` output in
+# infra/aws/outputs.tf). The DABs job injects `RAW_BUCKET` (or the full `IEEE_RAW_PATH`)
+# from that output — the old hardcoded `fintelliguard-raw` never matched the real bucket
+# name, so Auto Loader would 404 on the first real run.
+_RAW_BUCKET = os.environ.get("RAW_BUCKET", "fintelliguard-raw")
+IEEE_RAW_PATH = os.environ.get("IEEE_RAW_PATH", f"s3://{_RAW_BUCKET}/raw/ieee-cis/")
 
 
 @dlt.table(

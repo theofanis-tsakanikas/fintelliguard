@@ -39,8 +39,30 @@ _ONE_DAY = timedelta(hours=24)
 _THIRTY_DAYS = timedelta(days=30)
 
 
-def _parse(ts: str) -> datetime:
-    return datetime.fromisoformat(ts)
+class FeatureComputationError(ValueError):
+    """A transaction cannot be turned into features (e.g. an unparseable timestamp).
+
+    Raised for the CURRENT transaction so the caller (the streaming service / the Gold
+    ``applyInPandas`` batch) quarantines that one row instead of crashing the whole card
+    group. Silver's ``valid_event_time`` gate is the primary defence; this is defence in
+    depth for rescued/malformed rows that slip through.
+    """
+
+
+def _parse(ts: object) -> datetime:
+    """Parse an ISO-8601 timestamp, raising a typed, diagnosable error on bad input."""
+    try:
+        return datetime.fromisoformat(str(ts))
+    except (ValueError, TypeError) as exc:
+        raise FeatureComputationError(f"invalid ISO-8601 timestamp: {ts!r}") from exc
+
+
+def _parse_or_none(ts: object) -> datetime | None:
+    """Parse a HISTORY timestamp, returning None on bad input (skip, never crash the group)."""
+    try:
+        return _parse(ts)
+    except FeatureComputationError:
+        return None
 
 
 def compute_features(
@@ -55,14 +77,21 @@ def compute_features(
     amount, merchant_id, card_hash, device_id, ip_country, mcc_code).
     """
     merchant_risk_table = merchant_risk_table or {}
-    now = _parse(current["timestamp"])
+    # A bad/missing CURRENT timestamp raises FeatureComputationError -> caller quarantines.
+    now = _parse(current.get("timestamp"))
     amount = float(current["amount"])
 
-    # Strictly-before history only — the no-leakage guarantee.
-    prior = [h for h in card_history if _parse(h["timestamp"]) < now]
-    within_1h = [h for h in prior if now - _parse(h["timestamp"]) <= _ONE_HOUR]
-    within_24h = [h for h in prior if now - _parse(h["timestamp"]) <= _ONE_DAY]
-    within_30d = [h for h in prior if now - _parse(h["timestamp"]) <= _THIRTY_DAYS]
+    # Parse each history timestamp ONCE (was re-parsed ~5x per row), skipping unparseable
+    # rows defensively. Strictly-before-now only — the no-leakage guarantee.
+    prior_ts = [
+        (h, ts)
+        for h in card_history
+        if (ts := _parse_or_none(h.get("timestamp"))) is not None and ts < now
+    ]
+    prior = [h for h, _ in prior_ts]
+    within_1h = [h for h, ts in prior_ts if now - ts <= _ONE_HOUR]
+    within_24h = [h for h, ts in prior_ts if now - ts <= _ONE_DAY]
+    within_30d = [h for h, ts in prior_ts if now - ts <= _THIRTY_DAYS]
 
     # Amount features.
     hist_amounts = [float(h["amount"]) for h in within_30d]
@@ -76,7 +105,7 @@ def compute_features(
     distinct_merchants = len({h["merchant_id"] for h in within_24h} | {current["merchant_id"]})
 
     # Identity & device.
-    first_seen = min((_parse(h["timestamp"]) for h in prior), default=now)
+    first_seen = min((ts for _, ts in prior_ts), default=now)
     card_age_days = (now - first_seen).days
     device_seen_before = any(h["device_id"] == current["device_id"] for h in prior)
     device_txn_count_24h = sum(1 for h in within_24h if h["device_id"] == current["device_id"]) + 1
@@ -91,7 +120,7 @@ def compute_features(
     mcc_tier = transforms.risk_tier(current["mcc_code"], MCC_RISK_TIERS, default=2)
 
     # Temporal.
-    historical_hours = [_parse(h["timestamp"]).hour for h in within_30d]
+    historical_hours = [ts.hour for _, ts in prior_ts if now - ts <= _THIRTY_DAYS]
     unusual_hour = transforms.is_unusual_hour(now.hour, historical_hours)
 
     features = FeatureVector(
