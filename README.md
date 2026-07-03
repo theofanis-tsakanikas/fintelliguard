@@ -62,14 +62,14 @@ See [`docs/NARRATIVE.md`](docs/NARRATIVE.md) for the *why*, and
 | Ingestion (streaming) | Kafka / AWS MSK → Spark Structured Streaming |
 | Ingestion (batch) | S3 → Databricks Auto Loader |
 | Data platform | Databricks DLT · Unity Catalog · Delta Lake |
-| ML training | XGBoost · MLflow · Mosaic AI Feature Store |
-| ML serving | Mosaic AI Model Serving (REST, autoscale) |
-| Real-time AI (Tier 2) | AWS Bedrock Agent · Knowledge Bases · Guardrails · Claude (Haiku 4.5 → Sonnet 4.6) |
+| ML training | XGBoost · MLflow · Mosaic AI Feature Store *(online lookup deferred — spec + injected-lookup seam today)* |
+| ML serving | Mosaic AI Model Serving (REST, autoscale) — real XGBoost + TreeSHAP scorer, live in the local funnel |
+| Real-time AI (Tier 2) | AWS Bedrock Agent · Knowledge Bases · Guardrails · Claude (Haiku 4.5 → Sonnet 4.6) — the *reasoner* is deferred to AWS; the verdict-acceptance gate + guardrail are real & CI-tested |
 | Investigation AI (Tier 3) | Mosaic AI Agent Framework · Vector Search · Genie · Agent Evaluation |
-| Self-healing | LangGraph Supervisor + Medic · LangSmith tracing |
+| Self-healing | LangGraph Supervisor + Medic · LangSmith tracing *(config-ready, off by default — deferred)* |
 | IaC | Terraform (3 isolated layers) · Databricks Asset Bundles |
 | CI/CD | GitHub Actions |
-| Observability | Grafana · Prometheus · LangSmith |
+| Observability | Grafana · Prometheus — **live in the local end-to-end** (`make e2e`): the scorer emits the metrics the dashboards query · LangSmith *(deferred)* |
 
 ## Engineering highlights
 
@@ -166,6 +166,27 @@ Offline-validate the infrastructure (no cloud creds needed):
 terraform -chdir=infra/aws validate          # after: terraform -chdir=infra/aws init -backend=false
 cd infra/bundles && databricks bundle validate -t dev
 ```
+
+## Run the funnel end-to-end locally (one command)
+
+The excellent-but-unwired components — simulator, feature adapter, XGBoost scorer, verdict
+gate, guardrail — are strung into a **running** funnel with no cloud, and the
+Prometheus/Grafana observability becomes real (a live metrics emitter, not just dashboard
+JSON):
+
+```bash
+make e2e        # docker compose: simulator -> Kafka -> scorer -> Prometheus -> Grafana
+                # Grafana at http://localhost:3000 (admin / admin); scorer /metrics on :8000
+make e2e-down   # stop + clean up
+```
+
+The scorer computes the 15 features with the SAME adapter Gold uses, scores + explains with
+the real model (TreeSHAP), and runs flagged transactions through the real Tier-2
+verdict-acceptance gate + output guardrail — emitting the exact metric series the dashboards
+query. The Tier-2 *reasoner* is stubbed (the live Bedrock Claude call is deferred to AWS);
+everything that judges the verdict is the shipping code. Details + honest scope:
+[deploy/local/README.md](deploy/local/README.md). The funnel logic is unit-tested in
+`tests/serving/test_local_runtime.py`.
 
 ## Repository layout
 

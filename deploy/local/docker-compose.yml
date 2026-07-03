@@ -1,0 +1,86 @@
+# One-command local end-to-end funnel for FintelliGuard.
+#
+#   docker compose -f deploy/local/docker-compose.yml up --build     (or: make e2e)
+#
+# Brings the whole Tier-1/Tier-2 funnel to life with NO cloud, NO AWS/Databricks/Bedrock:
+#   simulator -> Kafka(txn.raw) -> streaming scorer (features -> XGBoost -> verdict gate ->
+#   guardrail) -> Prometheus -> Grafana. The scorer emits the exact metric names the
+#   committed Grafana dashboards query, so the repo's Prometheus/Grafana story is real here,
+#   not just dashboard JSON. Grafana: http://localhost:3000 (admin / admin).
+
+name: fintelliguard-local
+
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    hostname: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  scorer:
+    build:
+      context: ../..
+      dockerfile: deploy/local/Dockerfile
+    command: ["python", "-m", "ml.serving.stream_service", "--bootstrap-servers", "kafka:9092", "--metrics-port", "8000"]
+    ports:
+      - "8000:8000" # Prometheus /metrics
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  simulator:
+    build:
+      context: ../..
+      dockerfile: deploy/local/Dockerfile
+    # ~30 txns/sec with the realistic ~1% fraud rate; --no-ground-truth = model-facing payload.
+    command: ["python", "-m", "simulator", "--sink", "kafka", "--no-ground-truth", "--rate", "30"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: txn.raw
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - scorer
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      PROMETHEUS_URL: http://prometheus:9090
+      # Databricks-SQL datasource is unused locally (no warehouse); the Prometheus panels work.
+      DATABRICKS_HOST: unused
+      DATABRICKS_SQL_HTTP_PATH: unused
+      DATABRICKS_TOKEN: unused
+    volumes:
+      - ../../dashboards/provisioning:/etc/grafana/provisioning:ro
+      - ../../dashboards:/etc/grafana/dashboards/fintelliguard:ro
+    depends_on:
+      - prometheus

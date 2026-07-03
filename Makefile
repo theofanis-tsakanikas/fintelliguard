@@ -11,7 +11,9 @@ TF_DIR  ?= infra/aws/bootstrap
 PY      := $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help fmt lint test guardrail-scan govern-docs plan apply
+.PHONY: help fmt lint test guardrail-scan govern-docs e2e e2e-down plan apply
+
+COMPOSE := docker compose -f deploy/local/docker-compose.yml
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -32,6 +34,12 @@ guardrail-scan: ## Run the guardrail red-team coverage gate
 
 govern-docs: ## Regenerate the model/dataset cards + AI-Act technical docs
 	$(PY) -m ml.governance.generate
+
+e2e: ## One-command LOCAL end-to-end funnel (simulator -> Kafka -> scorer -> Prometheus -> Grafana). Grafana: :3000
+	$(COMPOSE) up --build
+
+e2e-down: ## Stop the local end-to-end funnel and remove its volumes
+	$(COMPOSE) down -v
 
 # --- Terraform (stubs — wired up as IaC layers land) -------------------------
 # Usage: make plan  TF_DIR=infra/aws
