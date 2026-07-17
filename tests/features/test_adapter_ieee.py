@@ -49,7 +49,6 @@ def test_proxy_mapping_on_known_row():
     assert fv.device_txn_count_24h == 2
     assert fv.country_mismatch is True  # addr2 87 != modal 60
     assert fv.distinct_countries_24h == 2  # dist1 > 0
-    assert fv.merchant_risk_score == 0.12  # ProductCD C
     assert fv.mcc_risk_tier == 5  # ProductCD C
     assert fv.is_unusual_hour is True  # hour 3 is far from the card's 9-11 active band
     validate_feature_vector(fv)
@@ -88,7 +87,6 @@ def test_neutral_defaults_without_context_or_optional_columns():
     assert fv.device_seen_before is False  # D1 == 0
     assert fv.country_mismatch is False  # no modal addr2 / no addr2
     assert fv.distinct_countries_24h == 1  # dist1 == 0
-    assert fv.merchant_risk_score == 0.02  # default
     assert fv.mcc_risk_tier == 2  # default
     assert fv.is_unusual_hour is False  # midday
     validate_feature_vector(fv)

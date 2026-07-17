@@ -11,7 +11,11 @@ compared dataclass field types, which cannot diverge. Six skews lived underneath
     device_txn_count_24h     sum(...) + 1              int(C6)          -> min 1 vs min 0
     amount_sum_1h            amount + sum(prior)       C1 * amount      -> 0.0 while
                                                                            amount_usd = 120
-    merchant_risk_score      always 0.0 (dead)         0.02 .. 0.12
+
+A seventh, `merchant_risk_score`, was removed from the contract entirely rather than
+reconciled: it is a target encoding, and the labels and the merchant identities live in
+different datasets, so no definition of it can be identical on both sides. See
+`ml/features/schema.py`.
 
 An XGBoost split learned at `txn_velocity_1h <= 0.5` — the IEEE "no prior activity" bucket
 — is unreachable at serving, where the minimum is 1. That is not a rounding difference; it

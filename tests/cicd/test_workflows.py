@@ -88,8 +88,32 @@ def test_ci_enforces_the_responsible_ai_gates():
         "python -m ml.governance.generate --check",
         # and the gates themselves must be provably able to fail
         "python -m scripts.gate_proof",
+        # the IaC scanner, over ONE recursive root
+        "checkov --directory . --framework terraform",
     ]:
         assert command in text, f"ci.yml no longer runs the Responsible-AI gate: {command}"
+
+
+def test_ci_puts_checkov_on_path_so_the_scan_canary_cannot_silently_skip():
+    """`tests/cicd/test_iac_scan.py` self-skips without checkov on PATH.
+
+    A skip is indistinguishable from a pass in aggregate output. The canary — which plants
+    an openly insecure bucket in each Terraform layer and requires the scanner to find it —
+    is the only thing standing between us and another blind scanner reporting green, so it
+    must actually RUN in CI.
+
+    `pipx`, not `pip`: checkov pulls `bc-python-hcl2`, a fork that installs over the `hcl2`
+    package the guardrail tests import and changes how the Terraform parses.
+    """
+    text = _text("ci")
+    assert "pipx install checkov" in text, (
+        "CI does not put checkov on PATH, so tests/cicd/test_iac_scan.py skips every run — "
+        "the canary that proves the scanner can see each layer would be permanently dead-green"
+    )
+    assert "pip install checkov" not in text, (
+        "checkov must not enter the project venv: its bc-python-hcl2 dependency shadows the "
+        "hcl2 package the guardrail attachment tests parse Terraform with"
+    )
 
 
 def test_ci_validates_every_terraform_layer():

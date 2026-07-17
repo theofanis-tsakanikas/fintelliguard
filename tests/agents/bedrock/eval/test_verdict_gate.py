@@ -1,6 +1,6 @@
 """Tests for the verdict acceptance gate over the labelled verdict set."""
 
-from agents.bedrock.eval.judge import VerdictContext, evaluate_verdict
+from agents.bedrock.eval.judge import DRIVER_ALIASES, VerdictContext, evaluate_verdict
 from agents.bedrock.eval.verdicts import verdict_cases
 
 CTX = VerdictContext(
@@ -86,3 +86,20 @@ def test_justified_escalation_accepted():
         "recommended_action": "block",
     }
     assert evaluate_verdict(verdict, CTX).accepted
+
+
+def test_driver_aliases_name_real_features():
+    """Every alias must resolve to a feature that exists.
+
+    `DRIVER_ALIASES` mapped "merchant risk" to `merchant_risk_score` after that feature was
+    removed from the canonical schema. A dangling alias is the guardrail bug's shape one
+    layer over: a control naming a target that is not there. It fails silently — the phrase
+    stops mapping to anything, so the faithfulness net quietly shrinks, and nothing says so.
+    """
+    from ml.features.schema import FEATURE_NAMES
+
+    dangling = sorted(set(DRIVER_ALIASES.values()) - set(FEATURE_NAMES))
+    assert not dangling, (
+        f"DRIVER_ALIASES points at features that do not exist: {dangling} — the phrase maps "
+        f"to nothing, so the prose net silently stops covering it. Canonical: {FEATURE_NAMES}"
+    )

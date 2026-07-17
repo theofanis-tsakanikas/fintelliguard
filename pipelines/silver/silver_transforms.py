@@ -91,7 +91,13 @@ def cleanse_ieee(bronze: DataFrame) -> DataFrame:
         F.coalesce(F.col("C4").cast("double"), F.lit(0.0)).alias("C4"),
         F.coalesce(F.col("C6").cast("double"), F.lit(0.0)).alias("C6"),
         F.coalesce(F.col("D1").cast("double"), F.lit(0.0)).alias("D1"),
-        F.col("addr2").cast("double").alias("addr2"),
+        # `nanvl`, not a bare cast: every other numeric column here is guarded and this one
+        # was not. A NaN addr2 is not NULL, so it survived to the adapter, where
+        # `nan != modal_addr2` is True and `country_mismatch` came out spuriously True on
+        # ~12% of real IEEE-CIS rows — one of the strongest features in the label.
+        # `-1` is outside the ISO country-code range, so it reads as "unknown", and the
+        # adapter's modal comparison treats it as a value like any other.
+        F.nanvl(F.col("addr2").cast("double"), F.lit(-1.0)).alias("addr2"),
         F.coalesce(F.col("dist1").cast("double"), F.lit(0.0)).alias("dist1"),
         F.col("ProductCD"),
         F.col("TransactionDT").cast("double").alias("TransactionDT"),

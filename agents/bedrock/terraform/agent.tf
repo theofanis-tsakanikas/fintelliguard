@@ -1,9 +1,13 @@
 # The Tier-2 fraud-investigator agent + the FraudScoring action group + KB association.
 
 resource "aws_bedrockagent_agent" "this" {
-  agent_name                  = "${local.name}-fraud-investigator"
-  agent_resource_role_arn     = aws_iam_role.agent.arn
-  foundation_model            = var.foundation_model
+  agent_name              = "${local.name}-fraud-investigator"
+  agent_resource_role_arn = aws_iam_role.agent.arn
+  foundation_model        = var.foundation_model
+
+  # The agent's stored state — session data and the instruction that drives regulated
+  # output — under the project CMK rather than the AWS-managed key.
+  customer_encryption_key_arn = local.aws.kms_key_arn
   instruction                 = file("${path.module}/../instructions/fraud_investigator_v1.md")
   idle_session_ttl_in_seconds = 600
   description                 = "Tier-2 compliance-verdict agent: scores via get_fraud_score, grounds in AML/PSD2."

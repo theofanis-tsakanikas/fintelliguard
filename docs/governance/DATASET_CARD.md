@@ -9,7 +9,7 @@
 
 ## Schema & parity
 
-One canonical schema of **15 features** (`ml/features/schema.py`). Both adapters must emit it identically — a single end-to-end test compares them, eliminating training/serving skew by construction.
+One canonical schema of **14 features** (`ml/features/schema.py`). Both adapters must emit it identically — a single end-to-end test compares them, eliminating training/serving skew by construction.
 
 ## Personal data handling
 

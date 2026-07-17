@@ -10,7 +10,6 @@ from datetime import datetime
 
 from ml.features import validate_feature_vector
 from ml.features.adapter_stream import compute_features
-from ml.features.merchant_risk import build_merchant_risk_table
 from ml.features.semantics import check_invariants
 from simulator import SimulatorConfig, TransactionGenerator
 
@@ -18,13 +17,6 @@ from simulator import SimulatorConfig, TransactionGenerator
 def _materialize():
     gen = TransactionGenerator(SimulatorConfig(seed=11, fraud_injection_rate=0.15, n_cards=300))
     txns = gen.generate(3000)
-
-    # The merchant risk table is fitted on the first third and the rest is scored against
-    # it — a target encoding fitted on the rows it encodes leaks the label.
-    split = len(txns) // 3
-    table = build_merchant_risk_table(
-        [{"merchant_id": t.merchant_id, "is_fraud": bool(t.is_fraud_truth)} for t in txns[:split]]
-    )
 
     history: dict[str, list[dict]] = defaultdict(list)
     first_seen: dict[str, str] = {}
@@ -37,7 +29,6 @@ def _materialize():
         record = compute_features(
             current,
             history[card],
-            merchant_risk_table=table,
             card_first_seen=datetime.fromisoformat(first_seen[card]),
         )
         validate_feature_vector(record.features)  # every emitted vector stays in contract

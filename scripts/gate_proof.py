@@ -520,22 +520,6 @@ ATTACKS: tuple[Attack, ...] = (
     ),
     # --- the feature contract ------------------------------------------------ #
     Attack(
-        name="merchant-risk-table-optional-again",
-        rationale=(
-            "The exact shape of the dead-feature bug: make the table optional with a "
-            "neutral default and every caller silently stops passing it, pinning "
-            "merchant_risk_score to a constant while training saw 0.02-0.12."
-        ),
-        path="ml/features/adapter_stream.py",
-        old=(
-            "merchant_risk = transforms.risk_score("
-            'current["merchant_id"], merchant_risk_table, default=0.0)'
-        ),
-        new="merchant_risk = 0.0",
-        gate="tests/features/test_parity_distributional.py",
-        must_fail="test_no_feature_is_a_dead_constant_on_the_serving_path",
-    ),
-    Attack(
         name="velocity-off-by-one-restored",
         rationale=(
             "Drop the window-count floor and IEEE trains on a 'no activity' bucket the "

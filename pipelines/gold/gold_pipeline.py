@@ -11,29 +11,10 @@ that could fail it has been removed before DLT looks.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import dlt
-from pyspark.sql import DataFrame, SparkSession
-
-from ml.features.merchant_risk import load as load_merchant_risk
+from pyspark.sql import DataFrame
 
 from . import gold_transforms
-
-# Spark conf key for the merchant risk table, published alongside the model that was
-# trained with it. Required: `merchant_risk_score` is one of the 15 features and it was 0.0
-# in every row this table has ever produced, because no caller passed a table at all.
-MERCHANT_RISK_TABLE_CONF = "fintelliguard.merchant_risk_table_path"
-
-
-def _merchant_risk_table():
-    """The table this pipeline scores against. Fails the update if it is missing.
-
-    Fail-closed on purpose: an absent table used to mean a silent constant 0.0, which looks
-    exactly like a working system until someone inspects the feature.
-    """
-    spark = SparkSession.getActiveSession()
-    return load_merchant_risk(Path(spark.conf.get(MERCHANT_RISK_TABLE_CONF)))
 
 
 @dlt.view(
@@ -43,10 +24,7 @@ def _merchant_risk_table():
 @dlt.expect_all(gold_transforms.GOLD_GATES)
 def txn_features_realtime_gated() -> DataFrame:
     # Unfiltered: a row that fails a gate must still be here for the expectation to see it.
-    features = gold_transforms.build_realtime_features(
-        dlt.read("silver.transactions_clean"),
-        merchant_risk_table=_merchant_risk_table(),
-    )
+    features = gold_transforms.build_realtime_features(dlt.read("silver.transactions_clean"))
     return gold_transforms.gate_features(features)
 
 

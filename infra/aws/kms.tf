@@ -4,6 +4,15 @@
 # AWS-managed resources (MSK/EBS). "Resource = *" in a key policy scopes to THIS key.
 
 data "aws_iam_policy_document" "kms" {
+  # A KMS *key policy*'s Resource is the key it is attached to; AWS requires "*" to mean
+  # exactly that, and there is no narrower value to write. Scoped HERE rather than in
+  # `.checkov.yml`, because a repo-wide `skip-check` would also hide the next genuine
+  # `Resource: "*"` anyone adds — which is how "no authored wildcards" became a comment
+  # sitting two lines above `aoss:*`.
+  #checkov:skip=CKV_AWS_109:Key-policy Resource is the key itself; "*" is the only valid value here.
+  #checkov:skip=CKV_AWS_111:Root administration of the key is the AWS-recommended shape; use is scoped by kms:ViaService.
+  #checkov:skip=CKV_AWS_356:Same — a key policy cannot name its own key by ARN.
+
   # Root account administers the key (prevents an unmanageable/orphaned key).
   statement {
     sid       = "EnableRootAdministration"

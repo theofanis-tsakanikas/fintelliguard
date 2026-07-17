@@ -49,7 +49,6 @@ SAMPLE_FEATURES = {
     "device_txn_count_24h": 5,
     "country_mismatch": True,
     "distinct_countries_24h": 2,
-    "merchant_risk_score": 0.8,
     "mcc_risk_tier": 5,
     "is_unusual_hour": True,
 }

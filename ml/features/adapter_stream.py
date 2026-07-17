@@ -76,7 +76,6 @@ def compute_features(
     current: Mapping[str, Any],
     card_history: Sequence[Mapping[str, Any]],
     *,
-    merchant_risk_table: Mapping[str, float],
     card_first_seen: datetime | None = None,
 ) -> FeatureRecord:
     """Compute the canonical 15 features for `current` given the card's prior events.
@@ -84,18 +83,10 @@ def compute_features(
     `current` and each history item are bronze contract dicts (transaction_id, timestamp,
     amount, merchant_id, card_hash, device_id, ip_country, mcc_code).
 
-    `merchant_risk_table` is REQUIRED — see `ml/features/merchant_risk.py`. It used to
-    default to `None -> {}`, no caller ever passed it, and `merchant_risk_score` was
-    therefore 0.0 on every transaction this system has ever scored while training saw
-    0.02-0.12. A neutral default on a feature input is not a convenience; it is a silent
-    way to ship a constant.
-
     `card_first_seen` is the card's durable first-transaction time. Without it, card age is
     measured against whatever history the caller happens to be holding — which for the
     streaming scorer is a 512-entry ring buffer, so a busy card could never look old.
     """
-    if merchant_risk_table is None:
-        raise TypeError("merchant_risk_table is required; pass an explicit table")
     # A bad/missing CURRENT timestamp raises FeatureComputationError -> caller quarantines.
     now = _parse(current.get("timestamp"))
     amount = float(current["amount"])
@@ -142,8 +133,9 @@ def compute_features(
     country_mismatch = transforms.values_differ(current["ip_country"], modal_country)
     distinct_countries = len({h["ip_country"] for h in within_24h} | {current["ip_country"]})
 
-    # Merchant.
-    merchant_risk = transforms.risk_score(current["merchant_id"], merchant_risk_table, default=0.0)
+    # Merchant. `merchant_risk_score` used to be computed here and is deliberately gone —
+    # see `ml/features/schema.py` for why it is not computable across this train/serve
+    # boundary at all.
     mcc_tier = transforms.risk_tier(current["mcc_code"], MCC_RISK_TIERS, default=2)
 
     # Temporal.
@@ -163,7 +155,6 @@ def compute_features(
         device_txn_count_24h=device_txn_count_24h,
         country_mismatch=country_mismatch,
         distinct_countries_24h=distinct_countries,
-        merchant_risk_score=merchant_risk,
         mcc_risk_tier=mcc_tier,
         is_unusual_hour=unusual_hour,
     )

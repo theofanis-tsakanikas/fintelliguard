@@ -1,4 +1,4 @@
-"""Canonical 15-feature schema — the single source of truth for feature parity.
+"""The canonical feature schema — the single source of truth for feature parity.
 
 Both adapters (`adapter_stream`, `adapter_ieee`) MUST produce exactly this schema: same
 names, same types, same valid ranges (see `docs/features.md`). Anything else is
@@ -56,8 +56,9 @@ def _type_ok(dtype: type, value: Any) -> bool:
     return isinstance(value, dtype)
 
 
-# The 15 features, in the grouping order of docs/features.md. Ranges come from the DLT
-# validation gates in that doc.
+# The canonical features, in the grouping order of docs/features.md. Ranges come from the
+# DLT validation gates in that doc. Nothing hardcodes the count — `len(FEATURE_SPECS)` is
+# the number, everywhere, so it cannot drift from the list the way "199 tests" did.
 FEATURE_SPECS: tuple[FeatureSpec, ...] = (
     # Amount (3)
     FeatureSpec(
@@ -82,8 +83,24 @@ FEATURE_SPECS: tuple[FeatureSpec, ...] = (
     # Geography (2)
     FeatureSpec("country_mismatch", bool),
     FeatureSpec("distinct_countries_24h", int, minimum=0),
-    # Merchant (2)
-    FeatureSpec("merchant_risk_score", float, minimum=0.0, maximum=1.0),
+    # Merchant (1)
+    #
+    # `merchant_risk_score` was here and is deliberately gone. It is a target encoding — a
+    # smoothed fraud rate per merchant — so it needs merchant identity AND labels in the
+    # same dataset. IEEE-CIS (which trains the model) has labels and no merchant identity;
+    # the stream (which serves) has merchants and no labels; `docs/data-flow.md` calls the
+    # two paths orthogonal by design. There is no dataset in this system that can produce
+    # the "merchant risk table (Gold)" `docs/features.md` promised, which is why no such
+    # table ever existed and the feature shipped as the constant 0.0 on every transaction
+    # scored.
+    #
+    # It could not be patched into consistency: any fix leaves a fitted continuous rate over
+    # ~200 merchants on one side and a 5-level product-class proxy on the other — the same
+    # name computing a different function either side of the train/serve boundary, which is
+    # the one thing this project calls non-negotiable. A feature whose meaning cannot be
+    # written down identically for both adapters does not belong in the contract.
+    #
+    # If labelled merchant history lands in the lakehouse, it returns with a real producer.
     FeatureSpec("mcc_risk_tier", int, allowed=(1, 2, 3, 4, 5)),
     # Temporal (1)
     FeatureSpec("is_unusual_hour", bool),
@@ -98,7 +115,7 @@ LOOKUP_KEY = "card_hash"
 
 @dataclass(frozen=True)
 class FeatureVector:
-    """The canonical 15 features for one transaction."""
+    """The canonical features for one transaction."""
 
     amount_usd: float
     amount_log: float
@@ -112,7 +129,6 @@ class FeatureVector:
     device_txn_count_24h: int
     country_mismatch: bool
     distinct_countries_24h: int
-    merchant_risk_score: float
     mcc_risk_tier: int
     is_unusual_hour: bool
 
@@ -130,7 +146,7 @@ class FeatureRecord:
     features: FeatureVector
 
     def to_row(self) -> dict[str, Any]:
-        """Flat row: keys + the 15 features, ready for the feature table."""
+        """Flat row: keys + the canonical features, ready for the feature table."""
         return {
             PRIMARY_KEY: self.transaction_id,
             LOOKUP_KEY: self.card_hash,

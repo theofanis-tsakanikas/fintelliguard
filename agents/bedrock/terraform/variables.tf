@@ -51,3 +51,22 @@ variable "databricks_secret_key" {
   type        = string
   default     = "databricks/token"
 }
+
+variable "lambda_log_retention_days" {
+  description = <<-DESC
+    Retention for the action-group Lambda's logs. Without an explicit log group AWS creates
+    one that never expires; a year matches the audit lookback a financial regulator expects.
+  DESC
+  type        = number
+  default     = 365
+}
+
+variable "lambda_reserved_concurrency" {
+  description = <<-DESC
+    Concurrency ceiling for the action-group Lambda. Tier 2 sees ~1% of transactions, so a
+    small reservation is ample — and it stops a Bedrock retry storm exhausting account-wide
+    Lambda concurrency and taking unrelated functions down with it.
+  DESC
+  type        = number
+  default     = 20
+}

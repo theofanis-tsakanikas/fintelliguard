@@ -46,10 +46,44 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "root" {
 
   rule {
     apply_server_side_encryption_by_default {
+      # AES256, not the CMK: the workspace's DBFS root is written by the Databricks
+      # control plane, which needs its own grant on any customer-managed key. Wiring
+      # `databricks_mws_customer_managed_keys` is the correct next step and is not done —
+      # stated here rather than left to look like an oversight.
       sse_algorithm = "AES256"
     }
     bucket_key_enabled = true
   }
+}
+
+# Versioning on the DBFS root. The raw bucket and the KB corpus both have it; this one was
+# the odd one out, and "this bucket happens to be less protected than the others" is not a
+# decision anyone made — it is a decision nobody noticed, which is what the scanner is for.
+resource "aws_s3_bucket_versioning" "root" {
+  bucket = aws_s3_bucket.root.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "root" {
+  bucket = aws_s3_bucket.root.id
+
+  rule {
+    id     = "expire-noncurrent-root-versions"
+    status = "Enabled"
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.root]
 }
 
 data "databricks_aws_bucket_policy" "root" {

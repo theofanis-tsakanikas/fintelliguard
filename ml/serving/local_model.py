@@ -21,29 +21,25 @@ import pandas as pd
 from xgboost import XGBClassifier
 
 from ml.features.adapter_stream import compute_features
-from ml.features.merchant_risk import MerchantRiskTable, build_merchant_risk_table
 from ml.features.schema import FEATURE_NAMES
 from ml.serving.scorer import FraudScorer, ScoringConfig
 from simulator.config import SimulatorConfig
 from simulator.generator import TransactionGenerator
 
-# Fraction of the generated stream reserved for fitting the merchant risk table. These
-# transactions are NOT used as training rows: the table is a target encoding, so fitting it
-# on rows it will later encode leaks the label into the feature.
-TABLE_FIT_FRACTION = 0.3
+# Warm-up: the earliest slice of the stream becomes history, never a training row, so every
+# row's window features see real prior events instead of an empty history.
+WARMUP_FRACTION = 0.3
 
 
 @dataclass(frozen=True)
 class DemoModel:
     """The scorer and the feature artefacts it must be served with.
 
-    The merchant risk table is part of the model's feature contract, not configuration —
-    a scorer served against a different table than it was trained on is train/serve skew.
-    They travel together so a caller cannot hold one without the other.
+    A history warm-up precedes the training rows, so every row's window features are
+    computed against real prior events rather than an empty history.
     """
 
     scorer: FraudScorer
-    merchant_risk_table: MerchantRiskTable
     holdout_auc: float
 
 
@@ -64,27 +60,19 @@ def _generate(max_records: int, fraud_rate: float, seed: int) -> list[tuple[dict
 
 def generate_labeled_dataset(
     *, max_records: int = 2000, fraud_rate: float = 0.18, seed: int = 42
-) -> tuple[pd.DataFrame, pd.Series, MerchantRiskTable]:
-    """Deterministic (X, y, merchant_risk_table) for the local demo model.
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Deterministic (X, y) for the local demo model.
 
     A higher-than-production fraud rate (default 18%) is used only so the tiny demo model
     sees enough positives to learn a usable decision surface — the live stream keeps the
     realistic ~1%.
 
-    The stream is split in time. The earliest `TABLE_FIT_FRACTION` fits the merchant risk
-    table and then serves only as history; the rest becomes training rows. Everything a row
-    sees is strictly older than the row itself.
+    The stream is split in time: the earliest `WARMUP_FRACTION` is history only, the rest
+    becomes training rows. Everything a row sees is strictly older than the row itself.
     """
     events = _generate(max_records, fraud_rate, seed)
-    split = int(len(events) * TABLE_FIT_FRACTION)
+    split = int(len(events) * WARMUP_FRACTION)
     fit_period, train_period = events[:split], events[split:]
-
-    table = build_merchant_risk_table(
-        [
-            {"merchant_id": contract["merchant_id"], "is_fraud": label}
-            for contract, label, _ in fit_period
-        ]
-    )
 
     history: dict[str, list[dict]] = defaultdict(list)
     first_seen: dict[str, datetime] = {}
@@ -101,7 +89,6 @@ def generate_labeled_dataset(
         record = compute_features(
             contract,
             history[card],
-            merchant_risk_table=table,
             card_first_seen=first_seen[card],
         )
         rows.append(record.features.as_dict())
@@ -109,7 +96,7 @@ def generate_labeled_dataset(
         history[card].append(contract)
 
     features = pd.DataFrame(rows, columns=list(FEATURE_NAMES)).astype(float)
-    return features, pd.Series(labels, dtype=int), table
+    return features, pd.Series(labels, dtype=int)
 
 
 def train_demo_scorer(
@@ -121,7 +108,7 @@ def train_demo_scorer(
     model produced could distinguish a working scorer from a memorised one — and the local
     funnel's `decision_hint` bands were applied to its probabilities regardless.
     """
-    features, labels, table = generate_labeled_dataset(seed=seed, **data_kwargs)  # type: ignore[arg-type]
+    features, labels = generate_labeled_dataset(seed=seed, **data_kwargs)  # type: ignore[arg-type]
 
     # Time-ordered split: the rows are already in event order, so the tail is the future.
     cut = int(len(features) * 0.8)
@@ -141,11 +128,7 @@ def train_demo_scorer(
     model.fit(x_train, y_train)
 
     auc = _holdout_auc(model, x_test, y_test)
-    return DemoModel(
-        scorer=FraudScorer(model, config or ScoringConfig()),
-        merchant_risk_table=table,
-        holdout_auc=auc,
-    )
+    return DemoModel(scorer=FraudScorer(model, config or ScoringConfig()), holdout_auc=auc)
 
 
 def _holdout_auc(model: XGBClassifier, x_test: pd.DataFrame, y_test: pd.Series) -> float:

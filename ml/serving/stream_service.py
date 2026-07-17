@@ -1,6 +1,6 @@
 """Local end-to-end fraud-scoring funnel — the glue the excellent-but-unwired components lacked.
 
-Consumes simulator transactions from Kafka, computes the canonical 15 features with the SAME
+Consumes simulator transactions from Kafka, computes the canonical features with the SAME
 `adapter_stream` the Gold layer uses, scores them with the real `FraudScorer` (Tier 1,
 TreeSHAP included), runs FLAGGED cases through the REAL Tier-2 verdict-acceptance gate
 (`agents.bedrock.eval.judge`) + output guardrail (`agents.bedrock.guardrails.policy`), and
@@ -17,7 +17,6 @@ import argparse
 import json
 import logging
 from collections import deque
-from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -147,14 +146,9 @@ def process_transaction(
     scorer: FraudScorer,
     guardrail: GuardrailPolicy,
     metrics: ServingMetrics,
-    merchant_risk_table: Mapping[str, float],
     decisions: DecisionSink | None = None,
 ) -> dict:
     """Run one transaction through the whole funnel; update metrics; return a summary.
-
-    `merchant_risk_table` must be the table the scorer was TRAINED with — see
-    `ml/features/merchant_risk.py`. It was not passed at all, so `merchant_risk_score` was
-    0.0 on every transaction this service has scored.
 
     `decisions` receives one `DecisionRecord` per scored transaction — EVERY transaction,
     not only the flagged ones. The AI-Act document already claims this exists; nothing
@@ -164,10 +158,7 @@ def process_transaction(
     card = str(contract.get("card_hash", ""))
     try:
         record = compute_features(
-            contract,
-            history.get(card),
-            merchant_risk_table=merchant_risk_table,
-            card_first_seen=history.first_seen(card),
+            contract, history.get(card), card_first_seen=history.first_seen(card)
         )
     except FeatureComputationError:
         metrics.record_quarantine()
@@ -244,11 +235,8 @@ def run(
     module (and its unit tests) stay importable without the native Kafka client."""
     from confluent_kafka import Consumer
 
-    # The scorer and its merchant risk table are one artefact: serving a model against a
-    # table it was not trained with is train/serve skew.
     demo = train_demo_scorer()
     scorer = scorer or demo.scorer
-    merchant_risk_table = demo.merchant_risk_table
     logger.info("demo model held-out AUC: %.3f", demo.holdout_auc)
 
     metrics = ServingMetrics(environment=environment, model_version=scorer.config.model_version)
@@ -285,9 +273,7 @@ def run(
             except (ValueError, AttributeError):
                 metrics.record_quarantine()
                 continue
-            result = process_transaction(
-                contract, history, scorer, guardrail, metrics, merchant_risk_table, decisions
-            )
+            result = process_transaction(contract, history, scorer, guardrail, metrics, decisions)
             processed += 1
             if result["status"] == "scored" and result["decision"] != DECISION_ALLOW:
                 logger.info(

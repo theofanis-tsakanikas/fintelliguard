@@ -27,7 +27,6 @@ Both adapters (stream + IEEE-CIS) must produce exactly this schema; parity is en
 | `device_txn_count_24h` | int | >= 0 |
 | `country_mismatch` | bool | — |
 | `distinct_countries_24h` | int | >= 0 |
-| `merchant_risk_score` | float | >= 0 <= 1 |
 | `mcc_risk_tier` | int | in [1, 2, 3, 4, 5] |
 | `is_unusual_hour` | bool | — |
 

@@ -59,7 +59,6 @@ def make_synthetic_frame(n_rows: int = 600, seed: int = 0, base_rate: float = 0.
     country_mismatch = rng.random(n_rows) < 0.10
     is_unusual_hour = rng.random(n_rows) < 0.20
     amount_zscore = rng.normal(0.0, 1.0, n_rows)
-    merchant_risk = rng.random(n_rows)
 
     frame = pd.DataFrame(
         {
@@ -75,7 +74,6 @@ def make_synthetic_frame(n_rows: int = 600, seed: int = 0, base_rate: float = 0.
             "device_txn_count_24h": (rng.poisson(1.0, n_rows) + 1).astype("int64"),
             "country_mismatch": country_mismatch,
             "distinct_countries_24h": (1 + country_mismatch.astype("int64")).astype("int64"),
-            "merchant_risk_score": merchant_risk,
             "mcc_risk_tier": rng.integers(1, 6, n_rows).astype("int64"),
             "is_unusual_hour": is_unusual_hour,
         }
@@ -87,7 +85,6 @@ def make_synthetic_frame(n_rows: int = 600, seed: int = 0, base_rate: float = 0.
         + 1.5 * is_unusual_hour
         + 0.20 * amount_zscore
         + 0.10 * velocity_1h
-        + 1.0 * merchant_risk
     )
     prob = 1.0 / (1.0 + np.exp(-logit))
     frame[LABEL_COLUMN] = (rng.random(n_rows) < prob).astype("int64")

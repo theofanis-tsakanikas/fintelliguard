@@ -26,18 +26,12 @@ from ml.serving.stream_service import (
 
 @pytest.fixture(scope="module")
 def demo():
-    """The scorer AND the merchant risk table it was trained with — one artefact."""
     return train_demo_scorer(max_records=400, seed=7)
 
 
 @pytest.fixture(scope="module")
 def scorer(demo):
     return demo.scorer
-
-
-@pytest.fixture(scope="module")
-def risk_table(demo):
-    return demo.merchant_risk_table
 
 
 def _txn(txn_id: str, **over: object) -> dict:
@@ -59,7 +53,7 @@ def _txn(txn_id: str, **over: object) -> dict:
 # Demo model bootstrap
 # --------------------------------------------------------------------------- #
 def test_generated_dataset_has_feature_parity_and_both_classes():
-    features, labels, _table = generate_labeled_dataset(max_records=300, seed=7)
+    features, labels = generate_labeled_dataset(max_records=300, seed=7)
     assert list(features.columns) == list(FEATURE_NAMES)  # the parity invariant
     assert labels.sum() > 0 and labels.sum() < len(labels)  # both classes present
 
@@ -71,7 +65,7 @@ def test_generated_dataset_has_no_dead_features():
     fitted on two constants and the funnel served two constants — consistent, and both
     wrong. No test looked, because none ever asserted a stream feature's range.
     """
-    features, _labels, _table = generate_labeled_dataset(max_records=600, seed=7)
+    features, _labels = generate_labeled_dataset(max_records=600, seed=7)
     dead = [name for name in FEATURE_NAMES if features[name].nunique() <= 1]
     assert not dead, f"features that never vary across 600 transactions: {dead}"
 
@@ -90,7 +84,7 @@ def test_demo_scorer_is_better_than_a_coin_flip(demo):
 
 
 def test_demo_scorer_scores_in_contract(scorer):
-    features, _labels, _table = generate_labeled_dataset(max_records=50, seed=7)
+    features, _labels = generate_labeled_dataset(max_records=50, seed=7)
     out = scorer.score(features.iloc[0].to_dict())
     assert set(out) == {
         "fraud_score",
@@ -106,17 +100,21 @@ def test_demo_scorer_scores_in_contract(scorer):
 # --------------------------------------------------------------------------- #
 # The funnel (process_transaction)
 # --------------------------------------------------------------------------- #
-def test_process_scores_a_normal_transaction(scorer, risk_table):
+def test_process_scores_a_normal_transaction(scorer):
     m = ServingMetrics(registry=CollectorRegistry())
     result = process_transaction(
-        _txn("t1"), CardHistoryStore(), scorer, GuardrailPolicy(), m, risk_table
+        _txn("t1"),
+        CardHistoryStore(),
+        scorer,
+        GuardrailPolicy(),
+        m,
     )
     assert result["status"] == "scored"
     assert 0.0 <= result["fraud_score"] <= 1.0
     assert result["decision"] in {"allow", "review", "block"}
 
 
-def test_process_quarantines_a_bad_timestamp(scorer, risk_table):
+def test_process_quarantines_a_bad_timestamp(scorer):
     registry = CollectorRegistry()
     m = ServingMetrics(registry=registry)
     result = process_transaction(
@@ -125,7 +123,6 @@ def test_process_quarantines_a_bad_timestamp(scorer, risk_table):
         scorer,
         GuardrailPolicy(),
         m,
-        risk_table,
     )
     assert result["status"] == "quarantined"
     value = registry.get_sample_value(

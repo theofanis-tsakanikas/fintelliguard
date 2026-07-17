@@ -50,6 +50,14 @@ jobs:
           ruff check .
           ruff format --check .
 
+      # pipx installs checkov ISOLATED and on PATH — never into the project venv, where its
+      # `bc-python-hcl2` dependency installs over the `hcl2` package the guardrail tests
+      # import and silently changes how `agent.tf` parses (it turned that suite 7/7 red).
+      # On PATH is what `tests/cicd/test_iac_scan.py` needs: without it those tests SKIP,
+      # and a skip is indistinguishable from a pass in aggregate output.
+      - name: Install checkov (isolated, for the IaC scan canary)
+        run: pipx install checkov
+
       - name: Pytest (full suite)
         run: pytest -q
 
@@ -78,15 +86,7 @@ jobs:
       # missing bucket versioning is a stock checkov finding — a scanner would have flagged
       # all three on the day they were written.
       - name: IaC security scan (checkov)
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: .
-          framework: terraform
-          quiet: true
-          output_format: cli
-          # Documented, reviewed deviations live here rather than as inline skips, so a
-          # suppression has an owner and a reason.
-          config_file: .checkov.yml
+        run: checkov --directory . --framework terraform --quiet --compact --config-file .checkov.yml
 
       - name: Terraform validate (per layer, offline)
         run: |

@@ -15,7 +15,9 @@ from ml.training.dataset import (
 
 def test_feature_columns_are_the_canonical_fifteen():
     assert FEATURE_COLUMNS == list(FEATURE_NAMES)
-    assert len(FEATURE_COLUMNS) == 15
+    # Derived, never hardcoded: a literal count drifts from the list it counts —
+    # exactly how README's "199 tests" outlived a 210-test suite.
+    assert len(FEATURE_COLUMNS) == len(FEATURE_NAMES)
     assert LABEL_COLUMN not in FEATURE_COLUMNS
 
 

@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from ml.features.schema import FEATURE_NAMES, LOOKUP_KEY, PRIMARY_KEY
 from pipelines.common import feature_record_schema
 
 _BASE_TS = datetime(2026, 1, 1, 12, 0, 0)
@@ -77,11 +78,53 @@ def sample_lakehouse(spark):
     spark.sql(f"CREATE DATABASE IF NOT EXISTS gold LOCATION '{db_root}/gold'")
     spark.sql(f"CREATE DATABASE IF NOT EXISTS silver LOCATION '{db_root}/silver'")
 
-    # gold.txn_features_realtime — EXACT canonical 15-feature schema.
+    # gold.txn_features_realtime — the EXACT canonical schema.
+    #
+    # Built from dicts against FEATURE_NAMES rather than positional tuples: a bare tuple
+    # silently rebinds every value after any inserted/removed feature, so a schema change
+    # would land `card_age_days` in `device_seen_before` and still typecheck.
     feature_rows = [
-        ("t1", "c1", 100.0, 4.62, 0.5, 2, 5, 210.0, 3, 30, True, 4, False, 1, 0.2, 1, False),
-        ("t2", "c2", 5000.0, 8.52, 6.0, 9, 12, 12000.0, 5, 2, False, 7, True, 3, 0.9, 5, True),
+        {
+            PRIMARY_KEY: "t1",
+            LOOKUP_KEY: "c1",
+            "amount_usd": 100.0,
+            "amount_log": 4.62,
+            "amount_zscore": 0.5,
+            "txn_velocity_1h": 2,
+            "txn_velocity_24h": 5,
+            "amount_sum_1h": 210.0,
+            "distinct_merchants_24h": 3,
+            "card_age_days": 30,
+            "device_seen_before": True,
+            "device_txn_count_24h": 4,
+            "country_mismatch": False,
+            "distinct_countries_24h": 1,
+            "mcc_risk_tier": 1,
+            "is_unusual_hour": False,
+        },
+        {
+            PRIMARY_KEY: "t2",
+            LOOKUP_KEY: "c2",
+            "amount_usd": 5000.0,
+            "amount_log": 8.52,
+            "amount_zscore": 6.0,
+            "txn_velocity_1h": 9,
+            "txn_velocity_24h": 12,
+            "amount_sum_1h": 12000.0,
+            "distinct_merchants_24h": 5,
+            "card_age_days": 2,
+            "device_seen_before": False,
+            "device_txn_count_24h": 7,
+            "country_mismatch": True,
+            "distinct_countries_24h": 3,
+            "mcc_risk_tier": 5,
+            "is_unusual_hour": True,
+        },
     ]
+    for row in feature_rows:
+        assert set(row) == {PRIMARY_KEY, LOOKUP_KEY, *FEATURE_NAMES}, (
+            "the dashboard's gold sample has drifted from the canonical schema"
+        )
     spark.createDataFrame(feature_rows, schema=feature_record_schema()).write.mode(
         "overwrite"
     ).saveAsTable("gold.txn_features_realtime")

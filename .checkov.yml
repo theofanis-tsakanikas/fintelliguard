@@ -14,23 +14,26 @@
 quiet: true
 compact: true
 
+# ONE root, walked recursively. A `directory:` LIST re-scanned the first entry three times
+# and never reached the other two: the run printed 155 -> 310 -> 465 "Passed, 0 Failed",
+# which is 155 x 3. Scanned separately, `infra/databricks` had 2 failures and
+# `agents/bedrock/terraform` had 6 — eight real findings, invisible, while the green number
+# was quoted as evidence that the infrastructure was clean.
+#
+# That is exactly the failure this file was added to end: a control that cannot see
+# two-thirds of what it is pointed at, reporting success. A canary proves it now
+# (`tests/cicd/test_iac_scan.py`), because a scanner nobody has blinded on purpose is a
+# scanner nobody has tested.
 directory:
-  - infra/aws
-  - infra/databricks
-  - agents/bedrock/terraform
+  - .
 
+# NOTE: the KMS key-policy findings (CKV_AWS_109/111/356) are NOT skipped here. A
+# `skip-check` entry is repo-wide, so skipping them globally would also hide the next
+# genuine `Resource: "*"` anyone writes. They are skipped inline on
+# `data.aws_iam_policy_document.kms` in `infra/aws/kms.tf`, where the justification is
+# next to the code it justifies and cannot silently widen.
 skip-check:
   # --- False positives on this codebase --------------------------------------
-
-  # CKV_AWS_109/111/356: "IAM policy allows write / permissions-management / '*' resource
-  # without constraints", raised against `aws_iam_policy_document.kms`. That document is a
-  # KMS *key policy*: its Resource is the key the policy is attached to, and AWS requires
-  # "*" to mean exactly that. There is no narrower value to write. The authored IAM
-  # policies elsewhere in these layers are ARN-scoped, and `knowledge_base.tf`'s data-plane
-  # wildcard — a real one — is now caught by tests/agents/bedrock/test_knowledge_base_security.py.
-  - CKV_AWS_109
-  - CKV_AWS_111
-  - CKV_AWS_356
 
   # CKV2_AWS_5: "security groups are attached to a resource". The MSK, Lambda and
   # Databricks data-plane security groups are consumed by OTHER Terraform layers via

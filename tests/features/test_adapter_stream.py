@@ -4,17 +4,6 @@ from __future__ import annotations
 
 from ml.features import validate_feature_vector
 from ml.features.adapter_stream import compute_features
-from ml.features.merchant_risk import build_merchant_risk_table
-
-# A real merchant risk table — `compute_features` requires one. It used to default to
-# `{}`, which is how `merchant_risk_score` shipped as a constant 0.0.
-RISK_TABLE = build_merchant_risk_table(
-    [
-        {"merchant_id": m, "is_fraud": i % 7 == 0}
-        for m in ("M1", "M2", "M001", "M002")
-        for i in range(60)
-    ]
-)
 
 
 def _txn(ts, amount, merchant, device, country="DE", mcc="5411"):
@@ -38,7 +27,7 @@ def test_window_and_state_features():
     ]
     current = _txn("2026-01-01T11:55:00+00:00", 100.0, "M3", "D1")
 
-    fv = compute_features(current, history, merchant_risk_table=RISK_TABLE).features
+    fv = compute_features(current, history).features
     assert fv.txn_velocity_1h == 3  # two priors within 1h + current
     assert fv.txn_velocity_24h == 4  # three priors within 24h + current
     assert fv.amount_sum_1h == 300.0  # current + two within-1h priors
@@ -57,7 +46,7 @@ def test_country_mismatch_against_modal():
         _txn("2026-01-01T09:30:00+00:00", 20.0, "M1", "D1", country="DE"),
     ]
     current = _txn("2026-01-01T10:00:00+00:00", 20.0, "M1", "D1", country="BR")
-    fv = compute_features(current, history, merchant_risk_table=RISK_TABLE).features
+    fv = compute_features(current, history).features
     assert fv.country_mismatch is True
     assert fv.distinct_countries_24h == 2
 
@@ -67,7 +56,7 @@ def test_no_target_leakage_future_is_ignored():
     future = _txn("2026-01-01T12:30:00+00:00", 999.0, "M2", "D9")  # AFTER current
     current = _txn("2026-01-01T12:00:00+00:00", 100.0, "M3", "D1")
 
-    fv = compute_features(current, [before, future], merchant_risk_table=RISK_TABLE).features
+    fv = compute_features(current, [before, future]).features
     # Only the strictly-before txn (+ current) counts; the future txn is invisible.
     assert fv.txn_velocity_1h == 2
     assert fv.txn_velocity_24h == 2

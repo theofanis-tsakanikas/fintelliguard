@@ -9,7 +9,6 @@ Both adapters build the same frozen `FeatureVector`, so the names match by const
 the types match because `_num` always returns `float` and every int is `int()`-wrapped. The
 assertion is `==` wearing a lab coat. It passed with all six of these live:
 
-  * `merchant_risk_score` pinned to 0.0 for every served transaction (0.02-0.12 in training)
   * `card_age_days` pinned to 0 for every served transaction (0-640 in training)
   * every velocity/count feature shifted by exactly one between train and serve
   * `amount_sum_1h` = 0.0 in training while `amount_usd` = 120.0
@@ -45,7 +44,6 @@ from datetime import datetime, timedelta
 import pytest
 
 from ml.features import adapter_ieee, adapter_stream, transforms
-from ml.features.merchant_risk import MerchantRiskTable, build_merchant_risk_table
 from ml.features.schema import FEATURE_NAMES, FeatureVector
 from ml.features.semantics import INVARIANTS, check_invariants
 
@@ -210,8 +208,6 @@ PROXY_ONLY = {
     "distinct_countries_24h",
     # ProductCD is a product class, not an MCC; the tiers are different taxonomies.
     "mcc_risk_tier",
-    # ProductCD's fraud rate is not the merchant's fraud rate.
-    "merchant_risk_score",
     # IEEE-CIS has no true 1h amount sum, so the training side values the prior in-window
     # transactions at the card's mean. The *invariant* (>= amount_usd) binds both sides;
     # exact equality cannot, and pretending otherwise would be the tautology again.
@@ -219,29 +215,16 @@ PROXY_ONLY = {
 }
 
 
-def _risk_table() -> MerchantRiskTable:
-    """A merchant risk table built the way training builds it, from labelled history."""
-    return build_merchant_risk_table(
-        [{"merchant_id": "M00001", "is_fraud": i % 20 == 0} for i in range(400)]
-        + [{"merchant_id": "M00002", "is_fraud": i % 4 == 0} for i in range(400)]
-        + [{"merchant_id": "M00003", "is_fraud": False} for _ in range(400)]
-    )
-
-
 def _both_adapters(seed: int):
     """Run one journey through both encodings and return the aligned vectors."""
     journey = _journey(seed)
     contracts = [_as_contract(e, CARD) for e in journey]
-    table = _risk_table()
     first_seen = journey[0].when
 
     pairs = []
     for i in range(len(journey)):
         stream_rec = adapter_stream.compute_features(
-            contracts[i],
-            contracts[:i],
-            merchant_risk_table=table,
-            card_first_seen=first_seen,
+            contracts[i], contracts[:i], card_first_seen=first_seen
         )
         ieee_rec = adapter_ieee.map_row(_as_ieee_row(journey, i, CARD), _ieee_context(journey, i))
         pairs.append((stream_rec.features, ieee_rec.features))
@@ -296,17 +279,17 @@ def _support(vectors: list[FeatureVector], name: str) -> set:
 
 
 # Deliberately NOT filtered by PROXY_ONLY: whether a feature is a proxy on the training
-# side says nothing about whether it varies on the serving side, and `merchant_risk_score`
-# — the worst offender — is a proxy. Excluding proxies here would have hidden it again.
+# side says nothing about whether it varies on the serving side. Excluding proxies here
+# would have hidden the worst offender the project had.
 @pytest.mark.parametrize("name", FEATURE_NAMES)
 def test_no_feature_is_a_dead_constant_on_the_serving_path(name):
     """A served feature must actually vary.
 
-    `merchant_risk_score` was 0.0 and `card_age_days` was 0 for EVERY transaction the
-    system ever scored, because no caller passed a merchant risk table and card age was
-    derived from a capped in-memory ring buffer. The model had learned splits on both. A
-    constant feature at serving is a split the model can never take — and nothing in 210
-    tests noticed, because no test ever asserted a stream feature's range.
+    `card_age_days` was 0 for EVERY transaction the system ever scored, because card age was
+        derived from a capped in-memory ring buffer and the simulator stamped every event on one
+        date. The model had learned splits on it. A constant feature at serving is a split the
+        model can never take — and nothing in 210 tests noticed, because no test ever asserted a
+        stream feature's range.
     """
     served = [stream_f for stream_f, _ in _both_adapters(seed=1)]
     support = _support(served, name)

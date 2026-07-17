@@ -20,8 +20,8 @@ from . import transforms
 from .schema import FeatureRecord, FeatureVector
 from .semantics import MIN_WINDOW_COUNT
 
-# ProductCD -> historical fraud rate proxy (merchant_risk_score) and risk tier.
-PRODUCTCD_RISK_SCORE: dict[str, float] = {"W": 0.02, "C": 0.12, "R": 0.05, "H": 0.08, "S": 0.10}
+# ProductCD -> risk tier. (`merchant_risk_score` was also proxied from ProductCD and is
+# deliberately gone — see `ml/features/schema.py`.)
 PRODUCTCD_RISK_TIER: dict[str, int] = {"W": 1, "R": 2, "H": 3, "S": 4, "C": 5}
 
 
@@ -47,7 +47,6 @@ class CardContext:
     # adapter must not invent it. When absent we fall back to C6 (see `map_row`) rather
     # than to `card_age_days > 0`, which made the feature a duplicate carrying no signal.
     device_seen_before: bool | None = None
-    seconds_per_day: int = 86_400
 
 
 def _num(row: Mapping[str, Any], key: str, default: float = 0.0) -> float:
@@ -67,6 +66,23 @@ def _num(row: Mapping[str, Any], key: str, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return default if number != number else number  # NaN != NaN
+
+
+def _usable(value: object) -> object | None:
+    """The value, or None when it is missing. NaN is missing; anything else is a value.
+
+    Deliberately NOT `float(value) or None`: `addr2` is a country code, numeric in real
+    IEEE-CIS and a string in the parity corpus, and coercing it to a float silently turned
+    every non-numeric code into "absent" — a skew introduced by the guard meant to remove
+    one. Only NaN is filtered, because only NaN is the thing that lies: `nan is not None` is
+    True and `nan != anything` is also True, so it reads as a present value that differs
+    from everything.
+    """
+    if value is None:
+        return None
+    if isinstance(value, float) and value != value:  # NaN != NaN
+        return None
+    return value
 
 
 def map_row(row: Mapping[str, Any], context: CardContext | None = None) -> FeatureRecord:
@@ -117,7 +133,13 @@ def map_row(row: Mapping[str, Any], context: CardContext | None = None) -> Featu
         device_seen_before = device_txn_count_24h > MIN_WINDOW_COUNT
 
     # Geography: addr2 is the billing country code; mismatch vs the card's modal addr2.
-    addr2 = row.get("addr2")
+    #
+    # `_finite`, not `is not None`. `float('nan') is not None` is True and `nan != 87.0` is
+    # also True, so a NaN addr2 forced country_mismatch=True — and `silver_transforms` casts
+    # addr2 with no `coalesce`, unlike every other numeric column, while addr2 is missing in
+    # ~12% of real IEEE-CIS rows. That is ~12% of training rows carrying a spurious True on
+    # one of the strongest features in the label.
+    addr2 = _usable(row.get("addr2"))
     country_mismatch = (
         transforms.values_differ(addr2, ctx.modal_addr2) if addr2 is not None else False
     )
@@ -125,9 +147,8 @@ def map_row(row: Mapping[str, Any], context: CardContext | None = None) -> Featu
     dist1 = _num(row, "dist1")
     distinct_countries_24h = 2 if dist1 > 0 else 1
 
-    # Merchant: fraud rate / tier per ProductCD.
+    # Merchant: risk tier per ProductCD.
     product_cd = str(row.get("ProductCD", ""))
-    merchant_risk_score = transforms.risk_score(product_cd, PRODUCTCD_RISK_SCORE, default=0.02)
     mcc_risk_tier = transforms.risk_tier(product_cd, PRODUCTCD_RISK_TIER, default=2)
 
     # Temporal: hour-of-day from TransactionDT (seconds offset from a reference).
@@ -152,7 +173,6 @@ def map_row(row: Mapping[str, Any], context: CardContext | None = None) -> Featu
         device_txn_count_24h=device_txn_count_24h,
         country_mismatch=country_mismatch,
         distinct_countries_24h=distinct_countries_24h,
-        merchant_risk_score=merchant_risk_score,
         mcc_risk_tier=mcc_risk_tier,
         is_unusual_hour=is_unusual_hour,
     )

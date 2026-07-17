@@ -7,7 +7,6 @@ from datetime import datetime
 import pytest
 
 from ml.features.adapter_stream import compute_features
-from ml.features.merchant_risk import build_merchant_risk_table
 from ml.features.schema import FEATURE_NAMES, LOOKUP_KEY, PRIMARY_KEY
 from pipelines.common import feature_record_schema, select_quarantined, select_valid
 from pipelines.gold.gold_transforms import (
@@ -40,13 +39,6 @@ _KEYS = (
 )
 
 
-_RISK_TABLE = build_merchant_risk_table(
-    [{"merchant_id": "M1", "is_fraud": i % 10 == 0} for i in range(200)]
-    + [{"merchant_id": "M2", "is_fraud": i % 3 == 0} for i in range(200)]
-    + [{"merchant_id": "M3", "is_fraud": False} for _ in range(200)]
-)
-
-
 def _expected_realtime():
     """Pure-python expected features, replaying each card's history in order.
 
@@ -71,7 +63,6 @@ def _expected_realtime():
             expected[rec["transaction_id"]] = compute_features(
                 rec,
                 history,
-                merchant_risk_table=_RISK_TABLE,
                 card_first_seen=first_seen,
             ).features.as_dict()
             history.append(rec)
@@ -80,12 +71,9 @@ def _expected_realtime():
 
 def test_gold_realtime_schema_and_parity(spark):
     silver = spark.createDataFrame(_STREAM_ROWS, _STREAM_SCHEMA)
-    gold = {
-        r["transaction_id"]: r.asDict()
-        for r in build_realtime_features(silver, merchant_risk_table=_RISK_TABLE).collect()
-    }
+    gold = {r["transaction_id"]: r.asDict() for r in build_realtime_features(silver).collect()}
 
-    # Exactly the canonical schema: keys + the 15 features.
+    # Exactly the canonical schema: keys + the canonical features.
     sample = next(iter(gold.values()))
     assert tuple(sample.keys()) == (PRIMARY_KEY, LOOKUP_KEY, *FEATURE_NAMES)
 
@@ -116,7 +104,6 @@ def _feature_row(transaction_id, **overrides):
         "device_txn_count_24h": 1,
         "country_mismatch": False,
         "distinct_countries_24h": 1,
-        "merchant_risk_score": 0.0,
         "mcc_risk_tier": 2,
         "is_unusual_hour": False,
     }

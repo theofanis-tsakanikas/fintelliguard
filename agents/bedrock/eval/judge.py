@@ -73,6 +73,10 @@ _CAUTION: dict[str, int] = {DECISION_ALLOW: 0, DECISION_REVIEW: 1, DECISION_BLOC
 
 # Human-readable driver phrases → canonical feature names. A verdict that leans on a
 # phrase here whose feature is not in the model's top_features is an invented driver.
+#
+# Every value must name a feature that EXISTS (`test_driver_aliases_name_real_features`).
+# An alias for a removed feature is a dangling reference — the same shape as a guardrail
+# bound to a policy that is not there: it resolves to nothing and silently stops mapping.
 DRIVER_ALIASES: dict[str, str] = {
     "velocity spike": "txn_velocity_1h",
     "velocity": "txn_velocity_1h",
@@ -86,7 +90,6 @@ DRIVER_ALIASES: dict[str, str] = {
     "amount anomaly": "amount_zscore",
     "amount spike": "amount_zscore",
     "high amount": "amount_usd",
-    "merchant risk": "merchant_risk_score",
     "distinct countries": "distinct_countries_24h",
     "distinct merchants": "distinct_merchants_24h",
     "card age": "card_age_days",

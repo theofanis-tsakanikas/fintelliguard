@@ -17,12 +17,7 @@ import dataclasses
 from ml.features import FEATURE_NAMES, FEATURE_SPECS, validate_feature_vector
 from ml.features.adapter_ieee import CardContext, map_row
 from ml.features.adapter_stream import compute_features
-from ml.features.merchant_risk import build_merchant_risk_table
 from ml.features.schema import LOOKUP_KEY, PRIMARY_KEY, FeatureVector
-
-RISK_TABLE = build_merchant_risk_table(
-    [{"merchant_id": "M001", "is_fraud": i % 8 == 0} for i in range(100)]
-)
 
 CURRENT = {
     "transaction_id": "t1",
@@ -58,7 +53,7 @@ def test_feature_vector_matches_canonical_specs():
 
 
 def test_stream_adapter_emits_canonical_schema_in_range():
-    record = compute_features(CURRENT, [], merchant_risk_table=RISK_TABLE)
+    record = compute_features(CURRENT, [])
     assert tuple(record.features.as_dict().keys()) == FEATURE_NAMES
     validate_feature_vector(record.features)  # raises if out of contract
     assert tuple(record.to_row().keys()) == (PRIMARY_KEY, LOOKUP_KEY, *FEATURE_NAMES)

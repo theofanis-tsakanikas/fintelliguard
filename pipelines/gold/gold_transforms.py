@@ -1,4 +1,4 @@
-"""Gold transforms: produce the 15 features by WIRING the tested ml/features adapters.
+"""Gold transforms: produce the canonical features by WIRING the tested ml/features adapters.
 
 The feature logic is NOT reimplemented here. Each layer applies the already-unit-tested
 pure functions over a per-card group via Spark `applyInPandas`:
@@ -14,7 +14,6 @@ quarantine (via pipelines.common), never dropping silently.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
 from datetime import datetime
 
 import pandas as pd
@@ -56,24 +55,34 @@ _CONTRACT_KEYS = (
 _REALTIME_SCHEMA = feature_record_schema()
 _TRAINING_SCHEMA = feature_record_schema([T.StructField("is_fraud", T.LongType(), True)])
 
+# The 30-day window `adapter_stream` uses, in TransactionDT's unit (seconds).
+_THIRTY_DAYS_SECONDS = 30 * 24 * 3600
+
 # DLT feature gates — exactly the validation gates from docs/features.md.
 _NO_NULL_FEATURES = " AND ".join(f"{name} IS NOT NULL" for name in FEATURE_NAMES)
 GOLD_GATES: dict[str, str] = {
     "amount_in_range": "amount_usd > 0 AND amount_usd < 1000000",
     "velocity_nonneg": "txn_velocity_1h >= 0",
     "velocity_monotonic": "txn_velocity_24h >= txn_velocity_1h",
-    "merchant_risk_unit": "merchant_risk_score >= 0 AND merchant_risk_score <= 1",
     "mcc_tier_valid": "mcc_risk_tier IN (1, 2, 3, 4, 5)",
     "no_null_features": _NO_NULL_FEATURES,
 }
 
 
-def _realtime_group(pdf: pd.DataFrame, merchant_risk_table: Mapping[str, float]) -> pd.DataFrame:
-    """Per-card: replay events in time order through `compute_features` (no leakage)."""
+def _realtime_group(pdf: pd.DataFrame) -> pd.DataFrame:
+    """Per-card: replay events in time order through `compute_features` (no leakage).
+
+    A row whose features cannot be computed is emitted with NULL features rather than
+    dropped, so the existing `no_null_features` gate routes it to the quarantine table with
+    a reason. It used to be appended to a local `quarantined` list that was never read —
+    the row vanished with no counter, no log and no table, while three docstrings and this
+    module's header promised "routes failures to quarantine … never dropping silently".
+    Collecting evidence and discarding it is worse than not collecting it: it reads as a
+    quarantine path to anyone who greps for one.
+    """
     pdf = pdf.sort_values(["timestamp", "transaction_id"])
     history: list[dict] = []
     out: list[dict] = []
-    quarantined: list[dict] = []
 
     # In a full-group recompute the card's earliest event IS its first-seen. Passing it
     # explicitly stops card_age_days being measured against whatever slice of history the
@@ -84,18 +93,13 @@ def _realtime_group(pdf: pd.DataFrame, merchant_risk_table: Mapping[str, float])
         current = {key: record[key] for key in _CONTRACT_KEYS}
         current["amount"] = float(current["amount"])
         try:
-            result = compute_features(
-                current,
-                history,
-                merchant_risk_table=merchant_risk_table,
-                card_first_seen=first_seen,
-            )
+            result = compute_features(current, history, card_first_seen=first_seen)
         except FeatureComputationError:
-            # Quarantine THIS row; keep the card group alive. `adapter_stream`'s docstring
-            # has always promised the Gold batch does this — it had no try/except at all,
-            # so one malformed timestamp anywhere in a card's history killed the Spark task,
-            # took four stage retries with it, and failed the whole DLT update.
-            quarantined.append(current)
+            # Keep the card group alive — `adapter_stream`'s docstring has always promised
+            # the Gold batch does this, and it had no try/except at all, so one malformed
+            # timestamp anywhere in a card's history killed the Spark task, took four stage
+            # retries with it, and failed the whole DLT update.
+            out.append(_unfeaturisable_row(current))
             continue
         out.append(
             {
@@ -108,6 +112,19 @@ def _realtime_group(pdf: pd.DataFrame, merchant_risk_table: Mapping[str, float])
     return pd.DataFrame(out, columns=[PRIMARY_KEY, LOOKUP_KEY, *FEATURE_NAMES])
 
 
+def _unfeaturisable_row(current: dict) -> dict:
+    """Keys, and nulls where the features would have been.
+
+    `no_null_features` then quarantines it with a reason a human can read, on the table
+    that already exists for the purpose — instead of the row disappearing.
+    """
+    return {
+        PRIMARY_KEY: str(current.get("transaction_id")),
+        LOOKUP_KEY: str(current.get("card_hash")),
+        **dict.fromkeys(FEATURE_NAMES),
+    }
+
+
 def _earliest_timestamp(pdf: pd.DataFrame) -> datetime | None:
     """The card's first event time, or None when nothing in the group parses."""
     parsed = pd.to_datetime(pdf["timestamp"], errors="coerce", format="mixed")
@@ -115,21 +132,9 @@ def _earliest_timestamp(pdf: pd.DataFrame) -> datetime | None:
     return parsed.min().to_pydatetime() if not parsed.empty else None
 
 
-def build_realtime_features(
-    silver_clean: DataFrame, *, merchant_risk_table: Mapping[str, float]
-) -> DataFrame:
-    """gold.txn_features_realtime — the 15 features from clean stream transactions.
-
-    `merchant_risk_table` is required and broadcast into every executor. It used to be
-    omitted entirely, so `merchant_risk_score` was 0.0 for every row this table has ever
-    produced (see `ml/features/merchant_risk.py`).
-    """
-    table = dict(merchant_risk_table)
-
-    def _group(pdf: pd.DataFrame) -> pd.DataFrame:
-        return _realtime_group(pdf, table)
-
-    return silver_clean.groupBy(LOOKUP_KEY).applyInPandas(_group, schema=_REALTIME_SCHEMA)
+def build_realtime_features(silver_clean: DataFrame) -> DataFrame:
+    """gold.txn_features_realtime — the canonical features from clean stream transactions."""
+    return silver_clean.groupBy(LOOKUP_KEY).applyInPandas(_realtime_group, schema=_REALTIME_SCHEMA)
 
 
 def _training_group(pdf: pd.DataFrame) -> pd.DataFrame:
@@ -152,18 +157,31 @@ def _training_group(pdf: pd.DataFrame) -> pd.DataFrame:
     """
     pdf = pdf.sort_values(["TransactionDT", "TransactionID"])
 
-    seen_amounts: list[float] = []
-    seen_addr2: list[object] = []
-    seen_hours: list[int] = []
+    # 30-day windows, matching `adapter_stream`'s. These were unbounded — every prior row,
+    # forever — while the serving side windowed the same two aggregates to 30 days. Same
+    # feature name, two different windows, either side of the train/serve boundary.
+    seen: list[tuple[float, float | None, object | None]] = []  # (seconds, amount, addr2)
 
     out: list[dict] = []
     for record in pdf.to_dict("records"):
-        # Context from PRIOR rows only — this row is not yet in the lists.
+        now = _finite(record.get("TransactionDT")) or 0.0
+        window = [row for row in seen if now - row[0] <= _THIRTY_DAYS_SECONDS]
+
+        # Context from PRIOR rows only — this row is not yet in `seen`.
+        amounts = [amount for _, amount, _ in window if amount is not None]
+        addr2s = [addr for _, _, addr in window if addr is not None]
+        hours = [int((seconds // 3600) % 24) for seconds, _, _ in window]
+
         ctx = CardContext(
-            amount_mean=_mean(seen_amounts),
-            amount_std=_stddev(seen_amounts),
-            modal_addr2=modal_value(seen_addr2) if seen_addr2 else None,
-            active_hours=tuple(seen_hours) or None,
+            amount_mean=_mean(amounts),
+            amount_std=_stddev(amounts),
+            modal_addr2=modal_value(addr2s) if addr2s else None,
+            active_hours=tuple(hours) or None,
+            # IEEE-CIS has no device identity a batch job can resolve here, so this is left
+            # absent and `map_row` falls back to C6 — a device fact. It must NOT be derived
+            # from `card_age_days`, which is what made feature #9 a shadow of feature #8
+            # carrying zero independent signal.
+            device_seen_before=None,
         )
         result = map_row(record, ctx)
         row = {
@@ -174,15 +192,7 @@ def _training_group(pdf: pd.DataFrame) -> pd.DataFrame:
         row["is_fraud"] = int(record["isFraud"])
         out.append(row)
 
-        amount = _finite(record.get("TransactionAmt"))
-        if amount is not None:
-            seen_amounts.append(amount)
-        addr2 = _finite(record.get("addr2"))
-        if addr2 is not None:
-            seen_addr2.append(addr2)
-        seconds = _finite(record.get("TransactionDT"))
-        if seconds is not None:
-            seen_hours.append(int((seconds // 3600) % 24))
+        seen.append((now, _finite(record.get("TransactionAmt")), _finite(record.get("addr2"))))
 
     return pd.DataFrame(out, columns=[PRIMARY_KEY, LOOKUP_KEY, *FEATURE_NAMES, "is_fraud"])
 

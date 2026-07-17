@@ -75,7 +75,6 @@ def test_every_scored_transaction_is_recorded(demo):
         demo.scorer,
         GuardrailPolicy(),
         ServingMetrics(registry=CollectorRegistry()),
-        demo.merchant_risk_table,
         sink,
     )
     assert len(sink.records) == 1
@@ -96,7 +95,6 @@ def test_the_record_carries_the_model_version_that_made_the_decision(demo):
         demo.scorer,
         GuardrailPolicy(),
         ServingMetrics(registry=CollectorRegistry()),
-        demo.merchant_risk_table,
         sink,
     )
     record = sink.records[0]
@@ -113,7 +111,6 @@ def test_the_record_is_replayable(demo):
         demo.scorer,
         GuardrailPolicy(),
         ServingMetrics(registry=CollectorRegistry()),
-        demo.merchant_risk_table,
         sink,
     )
     record = sink.records[0]

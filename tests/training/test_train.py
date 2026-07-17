@@ -34,10 +34,10 @@ def test_train_end_to_end_logs_and_returns(tmp_path):
     assert result.run_id
     assert set(result.metrics) == {"auc_roc", "pr_auc", "fraud_precision", "fraud_recall"}
     assert all(0.0 <= v <= 1.0 for v in result.metrics.values())
-    # Importance covers exactly the canonical 15 features.
+    # Importance covers exactly the canonical features.
     assert set(result.feature_importance) == set(FEATURE_NAMES)
-    # The model saw exactly the 15 features — no label leakage.
-    assert result.model.n_features_in_ == 15
+    # The model saw exactly the canonical features — no label leakage.
+    assert result.model.n_features_in_ == len(FEATURE_NAMES)
     assert (tmp_path / "mlruns").exists()  # logged to the local MLflow store
 
 

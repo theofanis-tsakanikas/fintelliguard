@@ -27,7 +27,7 @@ from scripts.gate_proof import ATTACKS, _attack, _baseline
 # `gate_proof`; these are the ones that tell the story.
 FEATURED = (
     "guardrail-detached",
-    "merchant-risk-table-optional-again",
+    "velocity-off-by-one-restored",
     "medic-promotes-staging-to-production",
     "decision-softening-allowed",
     "dq-expectations-on-prefiltered-rows",
