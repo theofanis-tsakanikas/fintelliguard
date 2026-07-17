@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from agents.databricks.tools.search_similar_cases import SimilarCaseSearch, build_query
+from agents.databricks.tools.search_similar_cases import (
+    SimilarCaseSearch,
+    _format_results,
+    build_query,
+)
 
 
 class _FakeIndex:
@@ -75,3 +79,33 @@ def test_search_handles_empty_results():
             }
 
     assert SimilarCaseSearch(_Empty()).search("anything") == []
+
+
+def test_build_query_survives_a_null_feature_value():
+    """A Delta NULL is not a missing key. `float(None)` is a crash, not a degraded query.
+
+    `.get("amount_zscore", 0.0)` returns the default only when the key is ABSENT; a present
+    key with a NULL value returns None, and `float(None)` raised mid-call. Delta rows carry
+    NULLs routinely.
+    """
+    query = build_query({"amount_zscore": None, "txn_velocity_1h": None, "country_mismatch": True})
+    assert "country mismatch" in query  # the non-null driver still lands
+    assert isinstance(query, str)
+
+
+def test_format_results_survives_an_extra_score_column():
+    """Databricks appends a similarity score the manifest may not list.
+
+    `strict=True` turned that into `ValueError: zip() argument 2 is longer than argument 1`
+    — an uncaught crash in the analyst's tool call. The fixture used to hand-build the
+    manifest to make the widths agree, so the crash was unreachable in tests and routine in
+    production.
+    """
+    raw = {
+        "manifest": {"columns": [{"name": "case_id"}, {"name": "summary"}]},
+        "result": {"data_array": [["c1", "velocity spike", 0.93]]},  # 3 values, 2 columns
+    }
+    formatted = _format_results(raw)
+    assert formatted[0]["case_id"] == "c1"
+    assert formatted[0]["summary"] == "velocity spike"
+    assert 0.93 in formatted[0].values()  # the score is kept, not dropped or crashed on

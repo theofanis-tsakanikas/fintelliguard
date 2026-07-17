@@ -203,6 +203,47 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/agents/bedrock/guardrails/test_guardrail_attachment.py",
         must_fail="test_denied_topics_match_the_policy_model",
     ),
+    # --- the copilot layer --------------------------------------------------- #
+    Attack(
+        name="tool-schema-contradicts-implementation",
+        rationale=(
+            "get_fraud_score declared {transaction_id, card_hash} while its implementation "
+            "took a feature vector — the tool the LLM is told to call could not be called "
+            "with what it is told to send, and the old test 'matched contracts' by "
+            "re-asserting the same literals in both files."
+        ),
+        path="agents/databricks/tools/get_fraud_score.py",
+        old="    def get_fraud_score(self, transaction_id: str, card_hash: str) -> dict[str, Any]:",
+        new="    def get_fraud_score(self, features: dict[str, Any]) -> dict[str, Any]:",
+        gate="tests/agents/databricks/test_agent.py",
+        must_fail="test_get_fraud_score_takes_ids_not_a_feature_vector",
+    ),
+    Attack(
+        name="similar-case-search-crashes-on-a-score-column",
+        rationale=(
+            "Databricks appends a similarity score the manifest may not list; strict=True "
+            "turned that into an uncaught ValueError in the analyst's tool call, and the "
+            "fixture hand-built the manifest so the crash was unreachable in tests."
+        ),
+        path="agents/databricks/tools/search_similar_cases.py",
+        old="        formatted.append(dict(zip(names, row, strict=False)))",
+        new="        formatted.append(dict(zip(columns, row, strict=True)))",
+        gate="tests/agents/databricks/test_search_similar_cases.py",
+        must_fail="test_format_results_survives_an_extra_score_column",
+    ),
+    Attack(
+        name="keyword-router-scored-in-sample-only",
+        rationale=(
+            "The router's cues were written from eval_dataset(), so scoring it there reports "
+            "1.00 and means nothing; held-out it is 0.38, barely above chance. Scoring "
+            "in-sample is the closed loop reporting itself."
+        ),
+        path="tests/agents/databricks/test_eval.py",
+        old="    held_out = score_tool_selection(held_out_dataset(), keyword_router).accuracy",
+        new="    held_out = score_tool_selection(eval_dataset(), keyword_router).accuracy",
+        gate="tests/agents/databricks/test_eval.py",
+        must_fail="test_the_keyword_baseline_is_a_floor_not_a_router",
+    ),
     # --- the data-quality gates ---------------------------------------------- #
     Attack(
         name="dq-expectations-on-prefiltered-rows",

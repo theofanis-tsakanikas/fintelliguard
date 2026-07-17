@@ -59,6 +59,40 @@ _CASES: tuple[EvalCase, ...] = (
 )
 
 
+# Held-out questions, in the same three intents, deliberately phrased UNLIKE the cases
+# above — the keyword cues in `scoring.py` were written from `_CASES`, so measuring the
+# baseline on `_CASES` is a closed loop that reports 1.0 and means nothing. These are the
+# test set: natural analyst phrasings the cues never saw.
+_HELD_OUT: tuple[EvalCase, ...] = (
+    EvalCase(
+        "Average fraud rate for merchant M00012 last month?", QUERY_LAKEHOUSE, SHAPE_SCALAR_FACTS
+    ),
+    EvalCase("Count the transactions flagged on this card.", QUERY_LAKEHOUSE, SHAPE_SCALAR_FACTS),
+    EvalCase("How much has been spent through device D00045?", QUERY_LAKEHOUSE, SHAPE_SCALAR_FACTS),
+    EvalCase(
+        "Any historical analogues to this transaction?", SEARCH_SIMILAR_CASES, SHAPE_SIMILAR_CASES
+    ),
+    EvalCase(
+        "Has anything close to this happened before?", SEARCH_SIMILAR_CASES, SHAPE_SIMILAR_CASES
+    ),
+    EvalCase("Pull comparable resolved investigations.", SEARCH_SIMILAR_CASES, SHAPE_SIMILAR_CASES),
+    EvalCase(
+        "What drove this transaction's risk assessment?", GET_FRAUD_SCORE, SHAPE_SCORE_EXPLANATION
+    ),
+    EvalCase(
+        "Which signals made the model distrust this payment?",
+        GET_FRAUD_SCORE,
+        SHAPE_SCORE_EXPLANATION,
+    ),
+)
+
+
 def eval_dataset() -> tuple[EvalCase, ...]:
-    """The labeled evaluation cases."""
+    """The in-sample cases the tool descriptions and keyword cues were tuned against."""
     return _CASES
+
+
+def held_out_dataset() -> tuple[EvalCase, ...]:
+    """The test set: same intents, phrasings the cues never saw. This is where a router's
+    real quality shows, and where the keyword baseline is honestly weak."""
+    return _HELD_OUT

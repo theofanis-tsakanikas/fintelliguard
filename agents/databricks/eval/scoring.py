@@ -59,7 +59,15 @@ _SCORE_CUES = ("why", "explain", "drove", "score", "flagged")
 
 
 def keyword_router(question: str) -> str:
-    """Deterministic baseline router (offline harness only — not the production router)."""
+    """A deterministic keyword BASELINE — a floor for the production LLM router to beat.
+
+    Not the production router: the Databricks Agent Framework routes with an LLM over the
+    tool descriptions. This exists so a description change can be regression-scored offline
+    without calling a model, and its whole value is as a floor — held-out it is weak (see
+    `tests/agents/databricks/test_eval.py`), and a keyword matcher SHOULD be. The cues were
+    written from `eval_dataset()`, so its in-sample accuracy is meaningless; measure it on
+    `held_out_dataset()`.
+    """
     text = question.lower()
     if any(cue in text for cue in _SIMILARITY_CUES):
         return SEARCH_SIMILAR_CASES
