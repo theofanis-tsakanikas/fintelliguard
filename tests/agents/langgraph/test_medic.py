@@ -167,3 +167,71 @@ def test_rollback_is_unavailable_when_nothing_was_ever_promoted(mlflow_client):
 
     assert result["action"] == "rollback_unavailable"
     assert mlflow_client.transitions == []
+
+
+def test_a_refused_rollback_pages_a_human(mlflow_client, actions):
+    """An agent that gives up SILENTLY is worse than one that does nothing.
+
+    `rollback_refused` and `rollback_unavailable` never called `escalate`. So: the endpoint
+    is degraded, the only fallback fails its gate, the Medic declines to act — correctly —
+    and nobody is told. The p99 breach stays, the model stays, and the run reports itself as
+    handled.
+    """
+    from agents.langgraph.config import HealingConfig
+    from agents.langgraph.medic import medic_node
+    from agents.langgraph.state import FAILURE_ENDPOINT, OUTCOME_REFUSED
+
+    mlflow_client.runs["run-1"] = _Run(dict(FAILING_METRICS))  # the only fallback is unfit
+    state = {
+        "incident": {
+            "failure_class": FAILURE_ENDPOINT,
+            "fingerprint": "endpoint_latency:fraud-score",
+            "detail": {"endpoint": "fraud-score", "p99_ms": 900.0},
+        },
+        "actions_taken": [],
+        "decisions": [],
+        "total_actions": 0,
+    }
+    result = medic_node(state, actions, HealingConfig())
+
+    assert result["actions_taken"][-1]["action"] == "rollback_refused"
+    assert result["outcome"] == OUTCOME_REFUSED
+    assert actions.escalate.calls, "the agent refused to act and told nobody"
+
+
+def test_a_refusal_is_not_later_reported_as_a_remediation(mlflow_client, actions):
+    """The idempotency short-circuit returned OUTCOME_REMEDIATED unconditionally.
+
+    So a refused rollback reported "remediated" on every subsequent cycle, forever, while
+    the endpoint stayed broken — the layer reporting the wrong one of the three states the
+    `outcome` field exists to distinguish, on the safety path.
+    """
+    from agents.langgraph.config import HealingConfig
+    from agents.langgraph.medic import medic_node
+    from agents.langgraph.state import FAILURE_ENDPOINT, OUTCOME_REFUSED
+
+    mlflow_client.runs["run-1"] = _Run(dict(FAILING_METRICS))
+    incident = {
+        "failure_class": FAILURE_ENDPOINT,
+        "fingerprint": "endpoint_latency:fraud-score",
+        "detail": {"endpoint": "fraud-score", "p99_ms": 900.0},
+    }
+    first = medic_node(
+        {"incident": incident, "actions_taken": [], "decisions": [], "total_actions": 0},
+        actions,
+        HealingConfig(),
+    )
+    second = medic_node(
+        {
+            "incident": incident,
+            "actions_taken": first["actions_taken"],
+            "decisions": first["decisions"],
+            "total_actions": first["total_actions"],
+        },
+        actions,
+        HealingConfig(),
+    )
+    assert second["outcome"] == OUTCOME_REFUSED, (
+        f"a refused rollback reports {second['outcome']!r} on the next cycle while the "
+        "endpoint is still broken"
+    )

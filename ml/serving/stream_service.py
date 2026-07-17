@@ -39,7 +39,7 @@ from ml.serving.scorer import DECISION_ALLOW, DECISION_BLOCK, DECISION_REVIEW, F
 logger = logging.getLogger("fintelliguard.stream")
 
 
-class _NeverRaised(Exception):
+class _NeverRaisedError(Exception):
     """Only `scripts/gate_proof.py` uses this: its `pii-refusal-crashes-the-funnel` attack
     narrows `_record`'s except clause to this class, proving the funnel really does survive
     a refused audit record rather than surviving because nothing ever refuses one."""

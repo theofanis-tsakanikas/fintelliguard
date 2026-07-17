@@ -25,6 +25,7 @@ from agents.langgraph.state import (
     OUTCOME_ESCALATED,
     OUTCOME_REFUSED,
     OUTCOME_REMEDIATED,
+    OUTCOME_UNKNOWN,
     HealthState,
 )
 from ml.training.promote import PromotionDecision, evaluate_promotion
@@ -181,13 +182,31 @@ def medic_node(
     if failure_class == FAILURE_PIPELINE:
         return _handle_pipeline_failure(state, actions, config)
 
-    # One-shot remediations are idempotent.
+    # One-shot remediations are idempotent — but "already acted" must report what that
+    # action ACHIEVED, not assume it worked. This returned OUTCOME_REMEDIATED
+    # unconditionally, so a refused rollback reported "remediated" on every subsequent
+    # cycle, forever, while the endpoint stayed broken — the layer reporting the wrong one
+    # of the three states the `outcome` field was introduced to distinguish, on the safety
+    # path.
     if _has_action(state, fingerprint):
-        decisions = [*state.get("decisions", []), f"medic: skip (already remediated {fingerprint})"]
-        return {"decisions": decisions, "outcome": OUTCOME_REMEDIATED}
+        prior = _outcome_of_prior_action(state, fingerprint)
+        decisions = [
+            *state.get("decisions", []),
+            f"medic: skip (already acted on {fingerprint}: {prior})",
+        ]
+        return {"decisions": decisions, "outcome": prior}
 
     if failure_class == FAILURE_ENDPOINT:
         result = rollback_to_previous_model(actions.mlflow, config.fraud_model_name)
+        # A refusal is the agent saying "I cannot fix this" while the endpoint is still
+        # broken. It used to say it to nobody: `rollback_refused` / `rollback_unavailable`
+        # never called `escalate`, so the p99 breach stayed, the model stayed, and no human
+        # was told. An agent that gives up silently is worse than one that does nothing.
+        if result["action"] in _REFUSALS:
+            actions.escalate(
+                f"endpoint degraded and rollback refused: {result.get('reason', '?')} — "
+                "a human must decide"
+            )
     elif failure_class == FAILURE_LAG:
         result = _scale_consumers(actions, incident)
     else:
@@ -206,6 +225,14 @@ def medic_node(
 # a remediation, and reporting it as one is how an agent's failure becomes invisible.
 _REFUSALS = frozenset({"rollback_refused", "rollback_unavailable"})
 _ESCALATIONS = frozenset({"root_cause_escalate", "escalate_pipeline"})
+
+
+def _outcome_of_prior_action(state: HealthState, fingerprint: str) -> str:
+    """What the action already taken for this incident actually achieved."""
+    for taken in reversed(state.get("actions_taken", [])):
+        if taken.get("fingerprint") == fingerprint:
+            return _outcome_for(str(taken.get("action", "")))
+    return OUTCOME_UNKNOWN
 
 
 def _outcome_for(action: str) -> str:

@@ -1,41 +1,68 @@
 """Raw-PII detection — one definition, used by every control that claims to find it.
 
-The same pattern was written out three times: the guardrail policy model, the verdict gate,
-and the decision log. Three copies of a security control are three chances for it to drift,
-and the project has already paid for this shape once (`modal_value` was implemented twice
-and the two resolved ties differently, silently inverting `country_mismatch` at training).
+**What this is, and what it is not.** It is a high-precision net for PANs and emails
+written AS PANs and emails. It is NOT a defence against deliberate obfuscation, and no
+regex is: an adversarial review defeated the previous version with dot separators, slash
+separators, zero-width joiners, non-breaking spaces, a PAN split across two JSON fields,
+and a PAN formatted as a UUID. Those remain undetected here — see
+`tests/agents/bedrock/test_pii.py::test_known_evasions_are_documented_not_claimed`, which
+pins them so nobody mistakes silence for coverage.
 
-The pattern also had a real bug, found by feeding it a feature vector:
+The live control is Bedrock's PII classifier, attached to the agent
+(`agents/bedrock/terraform/guardrail.tf`). This module is the offline model of it: a
+deterministic net that runs in CI and at request time, catches the case that actually
+happens — a PAN in text — and refuses to pretend to more. It also models only
+`CREDIT_DEBIT_CARD_NUMBER` and `EMAIL`; `GuardrailPolicy.pii_entities` declares NAME too,
+and NAME is not modelled here, which is stated rather than left to be discovered.
 
-    r"\\b(?:\\d[ -]?){13,19}\\b"
+**One definition.** The pattern was written out three times — the guardrail policy model,
+the verdict gate, the decision log. Three copies of a security control are three chances
+for it to drift, and this project has already paid for that shape once (`modal_value` was
+implemented twice and the two resolved ties differently, silently inverting
+`country_mismatch` at training). Import the FUNCTIONS, not the patterns: the guardrail
+imported `PII_PATTERNS` and kept running the pre-Luhn detector while the gate and the log
+ran the fixed one — "one definition" that was three behaviours.
 
-matches the mantissa of a float. `amount_log = 3.9318256327243257` contains sixteen
-consecutive digits, so any verdict or record quoting a computed feature was reported as
-leaking a card number. A guardrail that blocks legitimate output on a float is not a
-stricter guardrail — it is a broken one, and its false-positive rate is a published number
-in `docs/governance/GUARDRAIL_COVERAGE.md`.
+**Two bugs this file exists because of**, both found by executing it rather than reading it:
 
-The fix is boundary discipline: a card number is not preceded or followed by a digit or a
-decimal point.
+* `r"\b(?:\d[ -]?){13,19}\b"` matches the mantissa of a float. `amount_log =
+  3.9318256327243257` is sixteen consecutive digits, and `\b` sits happily after a decimal
+  point — so every verdict quoting a computed feature was reported as leaking a card
+  number. A guardrail that blocks correct output is not stricter; it is broken, and its
+  false-positive rate is a number this project publishes to a regulator.
+* Then Luhn alone still misread ~10% of random digit runs, so a generated correlation id
+  (`9e988812-2850-4531-8c49-...`) refused roughly one decision in ten thousand, at random.
+  It presented as a flaky test.
 """
 
 from __future__ import annotations
 
 import re
 
-# A UUID. Masked out before the card scan, because it is a generated identifier with a
-# fixed 8-4-4-4-12 hex shape and cannot be a card number — and because it was producing
-# false positives at a rate that mattered:
+# How a card number may be GROUPED. This is what tells a PAN from a UUID, and it replaces
+# a mask that was actively unsafe.
 #
-#     9e988812-2850-4531-8c49-c36e1c2e94be
-#            ^^^^^^^^^^^^^^^^^^ fifteen digits with hyphens
+# The mask looked like this, with this justification:
 #
-# Correlation ids and transaction ids are both UUIDs here, so roughly one decision in ten
-# thousand was refused at random. Masking is safe in the direction that matters: a PAN is
-# grouped 4-4-4-4 and cannot match this shape, so no card number can hide inside it.
-_UUID = re.compile(
-    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
-)
+#     "a PAN is grouped 4-4-4-4 and cannot match this shape, so no card number can hide
+#      inside it"
+#
+# That claim is false, and an adversarial review proved it:
+#
+#     45395787-6362-1486-9abc-def012345678
+#     ^^^^^^^^^^^^^^^^^^  -> 4539578763621486, a Luhn-VALID card number
+#
+# An 8-4-4 split of the first sixteen digits is a legal UUID prefix, and the mask ran BEFORE
+# the card scan — so any PAN could be laundered past the verdict gate and the audit log by
+# formatting it as a UUID. The mask traded a rare false positive for a total bypass, which
+# for a guardrail is the wrong direction: a false negative is the failure that matters.
+#
+# Issuers group PANs in a small number of ways (4-4-4-4 for most, 4-6-5 for Amex), and none
+# of them is 8-4-4. So instead of masking a shape we hope is safe, we require the grouping
+# to be one a card actually uses. A UUID fails on its group of 8; the incidental
+# `988812-2850-4531-8` fails on its trailing group of 1.
+_MIN_GROUP, _MAX_GROUP = 3, 6
+_MIN_GROUPS, _MAX_GROUPS = 3, 5
 
 # A CANDIDATE card-number run: 13-19 digits, optionally spaced or hyphenated.
 #
@@ -95,24 +122,44 @@ def _luhn_valid(digits: str) -> bool:
     return total % 10 == 0
 
 
+def _grouping_is_card_like(candidate: str) -> bool:
+    """Is this grouped the way a card number is grouped?
+
+    Unbroken is fine. Otherwise every group must be `_MIN_GROUP`-`_MAX_GROUP` digits and
+    there must be `_MIN_GROUPS`-`_MAX_GROUPS` of them — which covers 4-4-4-4, 4-6-5 (Amex)
+    and 4-4-4-4-3 (19-digit), and excludes a UUID's 8-4-4 and the stray 6-4-4-1 that a
+    random correlation id throws up.
+    """
+    groups = [g for g in re.split(r"[ -]", candidate.strip(" -")) if g]
+    if len(groups) == 1:
+        return True  # unbroken digits
+    if not _MIN_GROUPS <= len(groups) <= _MAX_GROUPS:
+        return False
+    return all(_MIN_GROUP <= len(g) <= _MAX_GROUP for g in groups)
+
+
 def _is_card_number(candidate: str) -> bool:
+    """Three independent filters, because each catches what the others miss.
+
+    Boundary (in the regex) rejects runs embedded in identifiers and float mantissas;
+    grouping rejects shapes no issuer uses; Luhn rejects digits that are not a card number.
+    Any one of them alone has been demonstrably defeated.
+    """
     digits = re.sub(r"[ -]", "", candidate)
-    return 13 <= len(digits) <= 19 and _luhn_valid(digits)
+    if not 13 <= len(digits) <= 19:
+        return False
+    return _grouping_is_card_like(candidate) and _luhn_valid(digits)
 
 
 def found_pii(text: str) -> list[str]:
     """Every raw-PII substring in `text` — for diagnosing a rejection.
 
-    Three filters, each removing a different class of false positive that was real:
-    mask known identifiers, require the run to stand alone rather than sit inside a token,
-    and require it to satisfy Luhn. A detector that says "this is a lot of digits" is not a
-    card-number detector.
+    Scans the text AS GIVEN. An earlier version masked UUIDs first, which hid a PAN
+    formatted as one; nothing is pre-removed now, and the filters in `_is_card_number` do
+    the discriminating.
     """
     hits = [m.group(0) for m in _EMAIL_RE.finditer(text)]
-    scannable = _UUID.sub("<uuid>", text)
-    hits.extend(
-        m.group(0) for m in _CARD_CANDIDATE.finditer(scannable) if _is_card_number(m.group(0))
-    )
+    hits.extend(m.group(0) for m in _CARD_CANDIDATE.finditer(text) if _is_card_number(m.group(0)))
     return hits
 
 

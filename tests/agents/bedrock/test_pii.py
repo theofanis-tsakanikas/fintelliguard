@@ -20,6 +20,10 @@ import pytest
 
 from agents.bedrock.pii import contains_pii, found_pii
 
+# Chosen BECAUSE its corpus contains UUIDs whose digit runs pass Luhn — the exact case the
+# grouping rule exists to reject. See `test_the_uuid_corpus_actually_contains_the_phenomenon`.
+_UUID_CORPUS_SEED = 7
+
 CARD_NUMBERS = [
     pytest.param("card 4111111111111111 flagged", id="unspaced"),
     pytest.param("Cardholder 4111 1111 1111 1111.", id="spaced, ends a sentence"),
@@ -126,3 +130,59 @@ def test_a_digit_run_that_fails_the_luhn_checksum_is_not_a_card():
     """What separates a card number from a lot of digits."""
     assert not contains_pii("reference 1234567890123456 attached")  # fails Luhn
     assert contains_pii("card 4111111111111111 flagged")  # the classic test Visa, valid
+
+
+def test_the_guardrail_runs_the_same_detector_as_the_gate_and_the_log():
+    """Import the FUNCTION, not the pattern.
+
+    `policy.py` imported `PII_PATTERNS` and re-ran `re.search` itself, so it kept the
+    PRE-Luhn detector while the verdict gate and the decision log ran the fixed one: "one
+    definition, used by every control that claims to find it" was one definition and three
+    behaviours. `test_the_pattern_has_exactly_one_definition` passed throughout, because it
+    greps for the literal `"13,19"` — a string-in-file assertion, in the suite whose whole
+    thesis is that those cannot fail for any reason worth catching.
+    """
+    from agents.bedrock.guardrails.policy import GuardrailPolicy
+
+    guardrail = GuardrailPolicy()
+    for text in [t.values[0] for t in NOT_PII] + [
+        "amount_log is 3.9318256327243257",
+        "decision 9e988812-2850-4531-8c49-c36e1c2e94be recorded",
+    ]:
+        assert guardrail.evaluate_output(text).allowed == (not contains_pii(text)), (
+            f"the guardrail and the detector disagree on {text!r} — the guardrail is "
+            "running a different implementation of the same control"
+        )
+    for text in [t.values[0] for t in CARD_NUMBERS]:
+        assert guardrail.evaluate_output(text).blocked, f"the guardrail missed a PAN: {text!r}"
+
+
+# Evasions that DEFEAT this detector. Pinned so the gap is documented, not discovered.
+KNOWN_EVASIONS = [
+    pytest.param("4539.5787.6362.1486", id="dot separators"),
+    pytest.param("4539/5787/6362/1486", id="slash separators"),
+    pytest.param("4539‍5787‍6362‍1486", id="zero-width joiners"),
+    pytest.param("4539 5787 6362 1486", id="non-breaking spaces"),
+    pytest.param("txn-4539578763621486", id="embedded in an identifier"),
+    pytest.param("45395787-6362-1486-9abc-def012345678", id="formatted as a UUID"),
+    pytest.param("45395787\n63621486", id="split across lines"),
+    pytest.param("Cardholder John Smith", id="a name (declared but not modelled)"),
+    pytest.param("SSN 123-45-6789", id="an SSN (not modelled)"),
+]
+
+
+@pytest.mark.parametrize("text", KNOWN_EVASIONS)
+def test_known_evasions_are_documented_not_claimed(text):
+    """These are NOT caught, and that is stated rather than discovered.
+
+    A regex cannot defend against deliberate obfuscation — the live control is Bedrock's
+    PII classifier; this module is the offline model of it. The test exists so the boundary
+    of the claim is executable: if a future change starts catching one of these, this test
+    fails and the docstring gets updated. Silence is not coverage, and a security control's
+    documented limits are part of the control.
+    """
+    assert not contains_pii(text), (
+        f"{text!r} is now DETECTED — good, but agents/bedrock/pii.py still documents it as "
+        "an evasion this detector misses. Update the docstring; the boundary of a claim is "
+        "part of the claim."
+    )

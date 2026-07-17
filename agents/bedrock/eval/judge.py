@@ -111,10 +111,31 @@ _ESCALATION_CUES = (
 
 # --------------------------------------------------------------------------- #
 # Provision extraction — the grounding check's unit of comparison
+#
+# The unit is an (instrument, article) PAIR, not a bag of tokens. A token set unions
+# everything and loses the pairing, so with "PSD2 Art. 97" and "AMLD5 Art. 18" retrieved,
+# a verdict citing "AMLD5 Art. 97" — a provision that does not exist — was ACCEPTED, because
+# both halves appear somewhere in the context. Grounding is about what the context SAYS,
+# not which words it contains.
 # --------------------------------------------------------------------------- #
 
-# An article/provision number: "Art. 97", "Article 13", "art 22a".
-_ARTICLE = re.compile(r"\bart(?:icle)?\.?\s*(\d+[a-z]?)\b", re.IGNORECASE)
+# An article, singular or plural, with ranges and lists:
+#   "Art. 97" · "Article 13" · "art 22a" · "Articles 97 and 999" · "Art. 97-99" · "Arts 5, 6"
+# The tail is captured whole and split afterwards; matching one number per phrase is how
+# "Articles 97 and 999" smuggled 999 past the check — the plural killed the regex and the
+# fabricated article was simply never extracted.
+#
+# Longest alternative FIRST. Python's `|` is first-match, not longest-match, so
+# `\barts?\.?|\barticles?\b` matched "Art" inside "Article" and stopped there — the tail
+# parser then saw "icle 999", found no number, and the fabricated article was never
+# extracted at all. The check silently stopped checking the exact input it was written for.
+_ARTICLES = re.compile(
+    r"\barticles?\b|\barts?\.?",
+    re.IGNORECASE,
+)
+_ARTICLE_NUMBERS = re.compile(r"(\d+[a-z]?)", re.IGNORECASE)
+# What may sit between article numbers in one citation: separators, ranges, conjunctions.
+_ARTICLE_TAIL = re.compile(r"^[\s.:]*((?:\d+[a-z]?)(?:\s*(?:[-–—,;]|and|to|&)\s*\d+[a-z]?)*)")
 
 # A regulatory instrument by name: PSD2, AMLD5, GDPR, MiFID II, EBA...
 _INSTRUMENT = re.compile(r"\b(PSD\d?|AMLD\d?|GDPR|MiFID(?:\s*II)?|EBA|MLR)\b", re.IGNORECASE)
@@ -123,23 +144,55 @@ _INSTRUMENT = re.compile(r"\b(PSD\d?|AMLD\d?|GDPR|MiFID(?:\s*II)?|EBA|MLR)\b", r
 _GUIDELINE = re.compile(r"\bGL\s*(\d{4}/\d+)\b", re.IGNORECASE)
 
 
-def provisions(text: str) -> set[str]:
-    """The regulatory provisions named in `text`, normalised.
+def _normalise_instrument(text: str) -> str:
+    return re.sub(r"\s+", "", text.upper())
 
-    This is the whole grounding fix. Comparing citation strings to context strings with
-    `in` cannot distinguish "cites PSD2 Art. 97" from "cites PSD2 Art. 97 and also the
-    Art. 999 I made up" — the second contains the first, so containment says yes. Reducing
-    both sides to a SET of provisions makes the fabricated one a member that the context
-    does not have, and set difference is not fooled by concatenation.
+
+def provision_pairs(text: str) -> set[tuple[str, str]]:
+    """Every (instrument, article) a text actually cites.
+
+    The instrument is the nearest one to the LEFT of the article, which is how citations are
+    written: "PSD2 Art. 97 and AMLD5 Art. 18" is two pairs, not four.
+
+    Ranges and lists are expanded, so "Art. 97-99" cites 97, 98 AND 99 — a range that
+    silently swallowed a fabricated tail before. An article with no instrument in front of
+    it inherits the last one seen, which is also how people write ("PSD2 Arts. 97 and 98").
     """
-    found: set[str] = set()
-    for match in _INSTRUMENT.finditer(text):
-        found.add(re.sub(r"\s+", "", match.group(1).upper()))
-    for match in _ARTICLE.finditer(text):
-        found.add(f"ART.{match.group(1).upper()}")
+    pairs: set[tuple[str, str]] = set()
+    current: str | None = None
+
+    # Walk instruments and article-markers together, in order of appearance.
+    markers = [(m.start(), "instrument", m.group(1)) for m in _INSTRUMENT.finditer(text)]
+    markers += [(m.start(), "article", m.end()) for m in _ARTICLES.finditer(text)]
+    markers.sort()
+
+    for _pos, kind, value in markers:
+        if kind == "instrument":
+            current = _normalise_instrument(value)
+            continue
+        tail = _ARTICLE_TAIL.match(text[value:])
+        if not tail:
+            continue
+        for number in _ARTICLE_NUMBERS.findall(tail.group(1)):
+            pairs.add((current or "?", f"ART.{number.upper()}"))
+        # Expand a range: "97-99" -> 97, 98, 99.
+        for lo, hi in re.findall(r"(\d+)\s*[-–—]\s*(\d+)", tail.group(1)):
+            if int(hi) > int(lo) and int(hi) - int(lo) <= 50:  # a sane citation range
+                for n in range(int(lo), int(hi) + 1):
+                    pairs.add((current or "?", f"ART.{n}"))
+
     for match in _GUIDELINE.finditer(text):
-        found.add(f"GL{match.group(1)}")
-    return found
+        pairs.add(("EBA", f"GL{match.group(1)}"))
+    return pairs
+
+
+def provisions(text: str) -> set[str]:
+    """Flat provision strings, one per (instrument, article) pair.
+
+    Derived from `provision_pairs` so the two can never drift: a flat set is what the
+    funnel's grounding estimate needs, but it must count the same provisions the gate does.
+    """
+    return {f"{instrument} {article}" for instrument, article in provision_pairs(text)}
 
 
 @dataclass(frozen=True)
@@ -201,19 +254,28 @@ def _cited_references(regulatory_reference: object) -> list[str]:
     return []
 
 
-def _ungrounded_provisions(citation: str, context_refs: Sequence[str]) -> tuple[set[str], bool]:
-    """Provisions in `citation` that the retrieved context does not contain.
+def _retrieved_pairs(context_refs: Sequence[str]) -> set[tuple[str, str]]:
+    available: set[tuple[str, str]] = set()
+    for ref in context_refs:
+        available |= provision_pairs(ref)
+    return available
 
-    Returns `(fabricated, recognisable)`. `recognisable` is False when the citation names
-    no provision at all — `"A"` used to pass, being a substring of everything.
+
+def _ungrounded_provisions(citation: str, context_refs: Sequence[str]) -> tuple[set[str], bool]:
+    """Provisions in `citation` the retrieved context does not actually state.
+
+    Returns `(fabricated, recognisable)`. `recognisable` is False when the citation names no
+    provision at all — `"A"` used to pass, being a substring of everything.
+
+    Compares (instrument, article) PAIRS. A flat token set unions the context and loses the
+    pairing, so with "PSD2 Art. 97" and "AMLD5 Art. 18" retrieved, a verdict citing "AMLD5
+    Art. 97" — which does not exist — was accepted because both halves appear somewhere.
     """
-    cited = provisions(citation)
+    cited = provision_pairs(citation)
     if not cited:
         return set(), False
-    available: set[str] = set()
-    for ref in context_refs:
-        available |= provisions(ref)
-    return cited - available, True
+    fabricated = cited - _retrieved_pairs(context_refs)
+    return {f"{i} {a}" for i, a in fabricated}, True
 
 
 def evaluate_verdict(verdict: Mapping[str, object], context: VerdictContext) -> GateResult:
@@ -252,6 +314,15 @@ def evaluate_verdict(verdict: Mapping[str, object], context: VerdictContext) -> 
         fabricated |= missing_provisions
         if not recognisable:
             unrecognisable.append(citation)
+
+    # The reasoning is checked too. Grounding used to look ONLY at `regulatory_reference`,
+    # so a verdict with a clean reference field and "Under PSD2 Article 999 the issuer must
+    # decline..." in its reasoning was accepted — the fabricated regulation sitting in the
+    # field a human actually reads, which is the only field that matters for the harm.
+    fabricated |= {
+        f"{i} {a}"
+        for i, a in provision_pairs(reasoning) - _retrieved_pairs(context.retrieved_references)
+    }
 
     grounding_ok = bool(citations) and not fabricated and not unrecognisable
     checks["grounding"] = grounding_ok

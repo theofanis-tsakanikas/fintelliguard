@@ -268,6 +268,32 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_rollback_applies_the_same_promotion_gate_as_a_forward_promotion",
     ),
     Attack(
+        name="checkpointer-silently-non-durable",
+        rationale=(
+            "`build_checkpointer` promised to 'fail loud rather than fall back to an "
+            "in-memory saver' and the next line returned InMemorySaver() — so the retry "
+            "bound and the action budget were per-PROCESS, and a crash handed the agent a "
+            "fresh budget."
+        ),
+        path="agents/langgraph/graph.py",
+        old="    if config.checkpoint_db:",
+        new="    if False:",
+        gate="tests/agents/langgraph/test_graph.py",
+        must_fail="test_the_action_budget_survives_a_process_restart",
+    ),
+    Attack(
+        name="refused-rollback-pages-nobody",
+        rationale=(
+            "A refusal is the agent saying 'I cannot fix this' while the endpoint is still "
+            "broken — and it said it to nobody: rollback_refused never escalated."
+        ),
+        path="agents/langgraph/medic.py",
+        old='        if result["action"] in _REFUSALS:',
+        new="        if False:",
+        gate="tests/agents/langgraph/test_medic.py",
+        must_fail="test_a_refused_rollback_pages_a_human",
+    ),
+    Attack(
         name="p99-fires-on-a-single-sample",
         rationale=(
             "What shipped: one latency reading triggered a MODEL ROLLBACK. Latency and "
@@ -314,7 +340,7 @@ ATTACKS: tuple[Attack, ...] = (
         ),
         path="ml/serving/stream_service.py",
         old="    except Exception:  # noqa: BLE001 - nothing here may take the payment path down",
-        new="    except _NeverRaised:",
+        new="    except _NeverRaisedError:",
         gate="tests/serving/test_local_runtime.py",
         must_fail="test_a_refused_decision_record_does_not_take_the_funnel_down",
     ),
@@ -327,12 +353,43 @@ ATTACKS: tuple[Attack, ...] = (
             "the pair — the exact threat the grounding check exists to stop."
         ),
         path="agents/bedrock/eval/judge.py",
-        old="    cited = provisions(citation)\n    if not cited:\n        return set(), False",
+        old="    cited = provision_pairs(citation)\n    if not cited:\n        return set(), False",
         new=(
             "    if any(citation.lower() in r.lower() or r.lower() in citation.lower()"
             " for r in context_refs):\n        return set(), True\n"
-            "    cited = provisions(citation)\n    if not cited:\n        return set(), False"
+            "    cited = provision_pairs(citation)\n    if not cited:\n        return set(), False"
         ),
+        gate="tests/agents/bedrock/eval/test_verdict_gate.py",
+        must_fail="test_labeled_set_matches_expected_outcomes",
+    ),
+    Attack(
+        name="grounding-loses-the-instrument-article-pairing",
+        rationale=(
+            "The bypass that defeated the FIRST grounding fix. A flat token set unions the "
+            "context, so 'AMLD5 Art. 97' — a provision that does not exist — is accepted "
+            "because both halves appear somewhere in it."
+        ),
+        path="agents/bedrock/eval/judge.py",
+        old="    cited = provision_pairs(citation)",
+        new="    cited = {(p, p) for p in provisions(citation)}",
+        gate="tests/agents/bedrock/eval/test_verdict_gate.py",
+        must_fail="test_labeled_set_matches_expected_outcomes",
+    ),
+    Attack(
+        name="grounding-ignores-the-reasoning",
+        rationale=(
+            "Grounding checked only `regulatory_reference`, so an invented article in the "
+            "prose — the field a human actually reads — shipped with a clean citation."
+        ),
+        path="agents/bedrock/eval/judge.py",
+        old=(
+            "    fabricated |= {\n"
+            '        f"{i} {a}"\n'
+            "        for i, a in provision_pairs(reasoning)"
+            " - _retrieved_pairs(context.retrieved_references)\n"
+            "    }"
+        ),
+        new="    pass",
         gate="tests/agents/bedrock/eval/test_verdict_gate.py",
         must_fail="test_labeled_set_matches_expected_outcomes",
     ),
@@ -389,6 +446,32 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_no_computed_feature_value_is_ever_a_card_number",
     ),
     Attack(
+        name="pii-detector-drops-the-grouping-rule",
+        rationale=(
+            "Without it a UUID's 8-4-4 hex split reads as a card grouping, so a generated "
+            "correlation id refuses ~1 audit record in 10,000 at random — and the mask that "
+            "used to hide that also hid a PAN formatted as a UUID."
+        ),
+        path="agents/bedrock/pii.py",
+        old="    return _grouping_is_card_like(candidate) and _luhn_valid(digits)",
+        new="    return _luhn_valid(digits)",
+        gate="tests/agents/bedrock/test_pii.py",
+        must_fail="test_no_uuid_is_ever_a_card_number",
+    ),
+    Attack(
+        name="guardrail-runs-its-own-pii-detector",
+        rationale=(
+            "policy.py imported PII_PATTERNS and re-ran the regex itself, so it kept the "
+            "pre-Luhn detector while the gate and the log ran the fixed one — 'one "
+            "definition, used by every control' was one definition and three behaviours."
+        ),
+        path="agents/bedrock/guardrails/policy.py",
+        old="        if self.pii_entities and contains_pii(text):",
+        new='        if self.pii_entities and _matches_any(text, (r"\\b(?:\\d[ -]?){13,19}\\b",)):',
+        gate="tests/agents/bedrock/test_pii.py",
+        must_fail="test_the_guardrail_runs_the_same_detector_as_the_gate_and_the_log",
+    ),
+    Attack(
         name="pii-detector-drops-the-luhn-check",
         rationale=(
             "Without Luhn the detector means 'a lot of digits', not 'a card number'. "
@@ -397,8 +480,8 @@ ATTACKS: tuple[Attack, ...] = (
             "random — a PII detector with a coin-flip false-positive rate."
         ),
         path="agents/bedrock/pii.py",
-        old="    return 13 <= len(digits) <= 19 and _luhn_valid(digits)",
-        new="    return 13 <= len(digits) <= 19",
+        old="    return _grouping_is_card_like(candidate) and _luhn_valid(digits)",
+        new="    return _grouping_is_card_like(candidate)",
         gate="tests/agents/bedrock/test_pii.py",
         must_fail="test_a_digit_run_that_fails_the_luhn_checksum_is_not_a_card",
     ),
@@ -484,8 +567,11 @@ ATTACKS: tuple[Attack, ...] = (
             "red-team-failing code could be applied straight to the cloud."
         ),
         path=".github/workflows/deploy.yml",
-        old=("  plan:\n    name: Plan all layers (${{ inputs.environment }})\n    needs: validate"),
-        new="  plan:\n    name: Plan all layers (${{ inputs.environment }})",
+        # Targets the dependency itself, not the job's name — the name changed when the
+        # deploy was restructured and the attack went STALE, which is the rule working:
+        # a mutation whose target has moved is silently testing nothing.
+        old="    needs: validate\n    runs-on: ubuntu-latest",
+        new="    runs-on: ubuntu-latest",
         gate="tests/cicd/test_workflows.py",
         must_fail="test_deploy_only_ships_what_ci_validated",
     ),
@@ -500,6 +586,45 @@ ATTACKS: tuple[Attack, ...] = (
         new="        options: [dev, prod]\n        default: dev",
         gate="tests/cicd/test_workflows.py",
         must_fail="test_every_offered_environment_has_a_bundle_target",
+    ),
+    Attack(
+        name="guardrail-detuned-via-a-local",
+        rationale=(
+            "The bypass that defeated the FIRST fix. A blacklist of off-states cannot see "
+            "`input_strength = local.pa_strength` — the parser returns the unevaluated "
+            "expression, which is not in the blacklist, so the filter reads as active while "
+            "being off. Seven tests passed with PROMPT_ATTACK and PII redaction disabled."
+        ),
+        path="agents/bedrock/terraform/guardrail.tf",
+        old='      type            = "PROMPT_ATTACK"\n      input_strength  = "HIGH"',
+        new=('      type            = "PROMPT_ATTACK"\n      input_strength  = local.pa_strength'),
+        gate="tests/agents/bedrock/guardrails/test_guardrail_attachment.py",
+        must_fail="test_prompt_attack_filter_is_declared_and_active_on_input",
+    ),
+    Attack(
+        name="kb-delete-index-without-a-wildcard",
+        rationale=(
+            "The bypass that defeated the FIRST fix. `aoss:DeleteIndex` destroys the corpus "
+            "every verdict is grounded in and has no trailing star, so a blacklist on `*` "
+            "waves it through — it blacklisted the syntax of the finding, not the capability."
+        ),
+        path="agents/bedrock/terraform/knowledge_base.tf",
+        old='"aoss:ReadDocument", "aoss:WriteDocument"',
+        new='"aoss:ReadDocument", "aoss:WriteDocument", "aoss:DeleteIndex"',
+        gate="tests/agents/bedrock/test_knowledge_base_security.py",
+        must_fail="test_the_kb_role_holds_only_the_permissions_ingestion_needs",
+    ),
+    Attack(
+        name="kb-open-to-every-principal",
+        rationale=(
+            'Nothing checked WHO. `Principal = ["*"]` gives every principal in the '
+            "account read/write on the AML/PSD2 corpus, and shipped green."
+        ),
+        path="agents/bedrock/terraform/knowledge_base.tf",
+        old="    Principal = [aws_iam_role.kb.arn]",
+        new='    Principal = ["*"]',
+        gate="tests/agents/bedrock/test_knowledge_base_security.py",
+        must_fail="test_the_kb_data_policy_names_a_principal_and_a_scoped_resource",
     ),
     # --- the knowledge base -------------------------------------------------- #
     Attack(
@@ -543,7 +668,7 @@ ATTACKS: tuple[Attack, ...] = (
         ),
         new='Permission   = ["aoss:*"]',
         gate="tests/agents/bedrock/test_knowledge_base_security.py",
-        must_fail="test_the_kb_role_holds_no_wildcard_data_plane_permissions",
+        must_fail="test_the_kb_role_holds_only_the_permissions_ingestion_needs",
     ),
     # --- the feature contract ------------------------------------------------ #
     Attack(

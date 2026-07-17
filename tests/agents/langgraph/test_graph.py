@@ -215,3 +215,36 @@ def test_a_stable_thread_id_is_used():
     second = healing_thread_config(HealingConfig())
     assert first == second
     assert first["configurable"]["thread_id"]
+
+
+def test_the_action_budget_survives_a_process_restart(actions, tmp_path):
+    """A checkpointer that dies with the process is not durability.
+
+    `build_checkpointer`'s docstring said it "fails loud rather than falling back to an
+    in-memory saver: a silent non-durable fallback would restore exactly the bug this
+    exists to fix, while looking fixed" — and the next line returned `InMemorySaver()`. So
+    `retry_counts` and `total_actions` were per-PROCESS: a crash-and-restart, the exact
+    scenario durability exists for, handed the agent a fresh action budget every time, and
+    `max_total_actions` bounded nothing across restarts.
+
+    A NEW graph object on the SAME thread is what a restart looks like.
+    """
+    config = HealingConfig(
+        max_total_actions=1,
+        healing_thread_id="test-restart",
+        checkpoint_db=str(tmp_path / "healing.sqlite"),
+    )
+
+    first = build_self_healing_graph(StubMonitors(high_lag_signals()), actions, config)
+    run_self_healing(first)
+    assert len(actions.scale_consumers.calls) == 1, "the first cycle did not act"
+
+    # The process dies. A new graph, same thread, same database.
+    second = build_self_healing_graph(StubMonitors(high_lag_signals()), actions, config)
+    final = run_self_healing(second)
+
+    assert len(actions.scale_consumers.calls) == 1, (
+        "the agent acted again after a restart — the budget reset, so max_total_actions "
+        "bounds a process rather than an incident"
+    )
+    assert final["outcome"] == OUTCOME_ESCALATED

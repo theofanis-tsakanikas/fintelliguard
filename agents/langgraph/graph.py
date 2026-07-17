@@ -6,6 +6,7 @@ and remediation actions are injected, so the whole graph runs locally with mocks
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -21,6 +22,8 @@ from agents.langgraph.supervisor import (
     supervisor_node,
 )
 
+logger = logging.getLogger("fintelliguard.self_healing")
+
 
 def configure_tracing(config: HealingConfig) -> None:
     """Toggle LangSmith tracing via env. Never sets credentials — off means no live calls."""
@@ -32,33 +35,58 @@ def configure_tracing(config: HealingConfig) -> None:
 
 
 def build_checkpointer(config: HealingConfig):
-    """Durable state for the healing thread. ON by default — it is load-bearing.
+    """Durable state for the healing thread. Load-bearing, not a nice-to-have.
 
-    Without it `retry_counts` resets on every cycle, so `attempts` is always 0, always
-    `< max_pipeline_retries`, and `restart_pipeline` fires forever: the escalation branch
-    is unreachable in production and a broken pipeline is restarted indefinitely with
-    nobody paged. The tests only avoided this by threading state by hand
-    (`run_self_healing(graph, first)`) — production had no mechanism to do that, so the
-    test was quietly documenting the bug rather than covering it.
+    Without ANY checkpointer, `retry_counts` resets every cycle: `attempts` is always 0,
+    always below `max_pipeline_retries`, `restart_pipeline` fires forever, the escalation
+    branch is unreachable and nobody is paged. The tests only avoided that by threading
+    state by hand (`run_self_healing(graph, first)`) — production had no mechanism to do
+    that, so the test was documenting the bug rather than covering it. It is also the
+    precondition for the p99 confirmation window: `classify` is stateless, so debouncing
+    needs `signal_history` to survive between cycles. The durability gap and the debounce
+    gap were the same gap.
 
-    It is also the precondition for the p99 confirmation window: `classify` is stateless,
-    so debouncing needs `signal_history` to survive between cycles. The durability gap and
-    the debounce gap were the same gap.
+    Two levels, and the difference matters:
 
-    Fails loud rather than falling back to an in-memory saver: a silent non-durable
-    fallback would restore exactly the bug this exists to fix, while looking fixed.
+    * `checkpoint_db` set -> SQLite. State survives a process restart, so the retry bound
+      and `max_total_actions` are per-THREAD, which is what they claim to be.
+    * `checkpoint_db` unset -> in-memory. State survives across cycles WITHIN one process
+      and dies with it, so a crash hands the agent a fresh action budget. Adequate for the
+      local funnel and for tests; not adequate for a daemon.
+
+    This function's docstring used to say it "fails loud rather than falling back to an
+    in-memory saver" — and the next line returned `InMemorySaver()`. The fallback is still
+    there because it is the right default for a test suite, but it is now named, warned
+    about, and distinguished from the thing it is not.
     """
     if not config.enable_checkpointing:
         return None
-    try:
-        from langgraph.checkpoint.memory import InMemorySaver
-    except ImportError as exc:  # pragma: no cover - langgraph is a hard dependency
-        raise RuntimeError(
-            "checkpointing is enabled but no saver is available; refusing to run "
-            "non-durable, because retry counts that reset make escalation unreachable"
-        ) from exc
-    # In-process for the local funnel. A deployed daemon points this at Postgres — the
-    # store is a deployment decision, the durability is not.
+
+    if config.checkpoint_db:
+        try:
+            import sqlite3
+
+            from langgraph.checkpoint.sqlite import SqliteSaver
+        except ImportError as exc:  # pragma: no cover - the dep is declared
+            # Loud. A silent fall-through to in-memory would restore exactly the bug this
+            # exists to fix, while looking fixed — which is this project's whole disease.
+            raise RuntimeError(
+                f"checkpoint_db={config.checkpoint_db!r} asks for durable state and "
+                "langgraph-checkpoint-sqlite is not installed. Refusing to run non-durable: "
+                "retry counts that reset make escalation unreachable."
+            ) from exc
+        # A raw connection, NOT `from_conn_string` — that is a @contextmanager, and
+        # compiling with it yields a graph whose checkpointer has no `get_tuple`/`put` and
+        # dies on first invoke.
+        return SqliteSaver(sqlite3.connect(config.checkpoint_db, check_same_thread=False))
+
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    logger.warning(
+        "self-healing state is IN-MEMORY: retry counts and the action budget survive "
+        "cycles but not a restart, so a crash hands the agent a fresh budget. Set "
+        "HealingConfig.checkpoint_db for a daemon."
+    )
     return InMemorySaver()
 
 

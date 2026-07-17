@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from agents.bedrock.pii import PII_PATTERNS
+from agents.bedrock.pii import contains_pii
 
 # Policy-class identifiers (match the Terraform policy blocks).
 PROMPT_ATTACK = "PROMPT_ATTACK"
@@ -80,12 +80,6 @@ _PII_REQUEST_SIGNATURES = (
     r"unmask (the )?(card|pii|customer)",
 )
 
-# Raw PII value patterns (for output redaction): a bare PAN or email in free text.
-# Shared with the verdict gate and the decision log — the three used to carry separate
-# copies, and the copy here matched the mantissa of a float, so a verdict quoting
-# `amount_log = 3.93182563272432` was blocked as a card-number leak.
-_PII_VALUE_PATTERNS = PII_PATTERNS
-
 
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
@@ -122,7 +116,6 @@ class GuardrailPolicy:
     _prompt_attack_sigs: tuple[str, ...] = field(default=_PROMPT_ATTACK_SIGNATURES, repr=False)
     _investment_sigs: tuple[str, ...] = field(default=_INVESTMENT_ADVICE_SIGNATURES, repr=False)
     _pii_request_sigs: tuple[str, ...] = field(default=_PII_REQUEST_SIGNATURES, repr=False)
-    _pii_value_pats: tuple[str, ...] = field(default=_PII_VALUE_PATTERNS, repr=False)
 
     # -- input guardrail ---------------------------------------------------- #
 
@@ -143,7 +136,14 @@ class GuardrailPolicy:
         self, text: str, *, grounding_score: float | None = None
     ) -> GuardrailDecision:
         """Decide whether agent output is blocked: PII leak or ungrounded verdict."""
-        if self.pii_entities and _matches_any(text, self._pii_value_pats):
+        # `contains_pii`, not the raw pattern. Importing `PII_PATTERNS` and re-running
+        # `_matches_any` meant the guardrail kept the PRE-Luhn detector while the verdict
+        # gate and the decision log ran the fixed one — so `agents/bedrock/pii.py`'s "one
+        # definition, used by every control" was one definition and three behaviours, and
+        # this one still blocked a verdict quoting `amount_log = 3.9318256327243257` and
+        # ~0.075% of correlation ids. Import the FUNCTION; the patterns are an
+        # implementation detail of it.
+        if self.pii_entities and contains_pii(text):
             return GuardrailDecision(True, PII, "raw PII present in output")
         if grounding_score is not None and grounding_score < self.grounding_threshold:
             return GuardrailDecision(

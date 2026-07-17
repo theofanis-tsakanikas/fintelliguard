@@ -47,6 +47,14 @@ class HealingConfig:
     # STABLE by design. A per-run thread id makes a checkpointer decorative — each cycle
     # would start fresh and reset exactly what durability is for.
     healing_thread_id: str = "fintelliguard-self-healing"
+    # Path to the SQLite file that makes the state survive a RESTART, not just a cycle.
+    #
+    # Unset means in-memory: the retry bound and `max_total_actions` become per-process, so
+    # a crash — the exact scenario durability is for — hands the agent a fresh action
+    # budget. A daemon must set this; the local funnel and the tests do not. Postgres is the
+    # right backend for a deployed daemon and the store is a deployment decision; the
+    # durability is not.
+    checkpoint_db: str | None = None
 
     # LangSmith tracing — OFF by default (no live calls in tests).
     enable_langsmith_tracing: bool = False

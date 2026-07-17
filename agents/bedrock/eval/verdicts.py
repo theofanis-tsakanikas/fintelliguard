@@ -180,6 +180,85 @@ _CASES: tuple[VerdictCase, ...] = (
         False,
         expected_failure="faithfulness",
     ),
+    # --- second-round anchors: bypasses of the FIRST grounding fix ------------- #
+    #
+    # The first fix replaced substring containment with a token SET. Better, and defeated
+    # the same way: a set unions the context and loses the (instrument, article) pairing,
+    # and one regex matched one number per phrase. All four were verified ACCEPTED.
+    VerdictCase(
+        "cross_product_of_two_real_citations",
+        _CTX,
+        {
+            "fraud_score": 0.78,
+            "reasoning": "A velocity spike triggers review.",
+            "drivers": ["txn_velocity_1h"],
+            # PSD2 Art. 97 and AMLD5 Art. 18 are both retrieved. AMLD5 Art. 97 is neither —
+            # it does not exist — but every token in it appears somewhere in the context.
+            "regulatory_reference": "AMLD5 Art. 97",
+            "recommended_action": "review",
+        },
+        False,
+        expected_failure="grounding",
+    ),
+    VerdictCase(
+        "fabricated_article_hidden_by_a_plural",
+        _CTX,
+        {
+            "fraud_score": 0.78,
+            "reasoning": "A velocity spike triggers review.",
+            "drivers": ["txn_velocity_1h"],
+            # "Articles" (plural) defeated a regex written for "Art." — so 999 was never
+            # extracted, and a check that extracts nothing finds nothing wrong. One letter
+            # from the anchor above it.
+            "regulatory_reference": "PSD2 Articles 97 and 999",
+            "recommended_action": "review",
+        },
+        False,
+        expected_failure="grounding",
+    ),
+    VerdictCase(
+        "fabricated_article_hidden_by_a_range",
+        _CTX,
+        {
+            "fraud_score": 0.78,
+            "reasoning": "A velocity spike triggers review.",
+            "drivers": ["txn_velocity_1h"],
+            # "97-999" cites 97 and everything up to 999. The old parser read only 97.
+            "regulatory_reference": "PSD2 Art. 97-999",
+            "recommended_action": "review",
+        },
+        False,
+        expected_failure="grounding",
+    ),
+    VerdictCase(
+        "fabricated_regulation_in_the_reasoning",
+        _CTX,
+        {
+            "fraud_score": 0.78,
+            # Grounding checked ONLY `regulatory_reference`. So a clean reference field with
+            # an invented article in the prose was accepted — the fabricated regulation
+            # sitting in the one field a human actually reads.
+            "reasoning": "Under PSD2 Article 999 the issuer must decline this transaction.",
+            "drivers": ["txn_velocity_1h"],
+            "regulatory_reference": "PSD2 Art. 97 (SCA)",
+            "recommended_action": "review",
+        },
+        False,
+        expected_failure="grounding",
+    ),
+    VerdictCase(
+        "gold_reasoning_that_cites_retrieved_regulation",
+        _CTX,
+        {
+            "fraud_score": 0.78,
+            # The other direction: reasoning that cites regulation is normal and must pass.
+            "reasoning": "A velocity spike triggers review under PSD2 Article 97.",
+            "drivers": ["txn_velocity_1h"],
+            "regulatory_reference": "PSD2 Art. 97 (SCA)",
+            "recommended_action": "review",
+        },
+        True,
+    ),
     VerdictCase(
         "softened_decision_justified_by_a_conjunction",
         VerdictContext(

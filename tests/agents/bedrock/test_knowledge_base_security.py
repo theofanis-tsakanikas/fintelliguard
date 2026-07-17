@@ -25,6 +25,27 @@ SECURITY_POLICY = "aws_opensearchserverless_security_policy"
 ACCESS_POLICY = "aws_opensearchserverless_access_policy"
 VPC_ENDPOINT = "aws_opensearchserverless_vpc_endpoint"
 
+# ALLOWLIST. The first version asserted `not permission.endswith("*")` — it blacklisted the
+# SYNTAX of the finding rather than the CAPABILITY the finding names, so this shipped green:
+#
+#     Permission = ["aoss:DeleteDocument", "aoss:DeleteIndex"]   # no trailing *
+#     Principal  = ["*"]                                          # every principal
+#     Resource   = ["collection/*"]                               # every collection
+#
+# The test's own docstring said the harm of `aoss:*` is "deleting the collection the
+# verdicts are grounded in". `aoss:DeleteIndex` does exactly that and has no trailing star.
+# Enumerating what ingestion NEEDS is short; enumerating what it must not do is endless.
+INGESTION_PERMISSIONS = {
+    "aoss:CreateCollectionItems",
+    "aoss:DescribeCollectionItems",
+    "aoss:UpdateCollectionItems",
+    "aoss:CreateIndex",
+    "aoss:DescribeIndex",
+    "aoss:UpdateIndex",
+    "aoss:ReadDocument",
+    "aoss:WriteDocument",
+}
+
 
 @pytest.fixture(scope="module")
 def model():
@@ -59,14 +80,46 @@ def test_the_private_network_rule_points_at_a_vpc_endpoint_that_exists(model):
             assert ref.type == VPC_ENDPOINT, f"{ref.address} is not a VPC endpoint"
 
 
-def test_the_kb_role_holds_no_wildcard_data_plane_permissions(model):
-    """`aoss:*` includes deleting the collection the verdicts are grounded in."""
+def test_the_kb_role_holds_only_the_permissions_ingestion_needs(model):
+    """An allowlist: anything not on it — including `aoss:DeleteIndex` — fails.
+
+    `aoss:*` includes destroying the corpus every verdict is grounded in. So does
+    `aoss:DeleteIndex`, which has no trailing star and sailed past the blacklist that
+    replaced it.
+    """
     for rule in _policy(model, ACCESS_POLICY, "kb"):
         for entry in rule["Rules"]:
-            for permission in entry["Permission"]:
-                assert not permission.endswith("*"), (
-                    f"{entry['ResourceType']} grants {permission} — a data-plane wildcard, "
-                    "under a comment promising none"
+            granted = set(entry["Permission"])
+            extra = sorted(granted - INGESTION_PERMISSIONS)
+            assert not extra, (
+                f"{entry['ResourceType']} grants {extra}, which ingestion does not need. "
+                f"Allowed: {sorted(INGESTION_PERMISSIONS)}"
+            )
+
+
+def test_the_kb_data_policy_names_a_principal_and_a_scoped_resource(model):
+    """Nothing checked either, so `Principal = ["*"]` and `Resource = ["collection/*"]` were
+    invisible — every principal in the account with read/write on the regulatory corpus, and
+    the scope widened to every collection.
+
+    A least-privilege claim that never checks WHO or WHAT is a claim about verbs only.
+    """
+    for rule in _policy(model, ACCESS_POLICY, "kb"):
+        principals = rule.get("Principal", [])
+        assert principals, "the data access policy names no principal"
+        for principal in principals:
+            assert principal != "*", "the KB data policy grants to EVERY principal in the account"
+            ref = model.resolve(principal)
+            assert ref.type == "aws_iam_role", f"{ref.address} is not an IAM role"
+
+        for entry in rule["Rules"]:
+            for resource in entry["Resource"]:
+                assert not resource.startswith(("collection/*", "index/*")), (
+                    f"{resource!r} scopes to every collection in the account, not ours"
+                )
+                assert "${local.collection_name}" in resource, (
+                    f"{resource!r} does not name this layer's collection — it is either "
+                    "wider than intended or points somewhere unmanaged"
                 )
 
 

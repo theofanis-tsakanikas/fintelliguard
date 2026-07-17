@@ -31,9 +31,25 @@ AGENT = "aws_bedrockagent_agent"
 GUARDRAIL = "aws_bedrock_guardrail"
 GUARDRAIL_VERSION = "aws_bedrock_guardrail_version"
 
-# A strength/action that renders a declared filter inert. The old grep tests passed with
-# every one of these in place.
-NEUTERED = {"NONE", "DISABLED", ""}
+# ALLOWLISTS, not blacklists. This is the whole lesson of this file's second round.
+#
+# The first version blacklisted the off-states — `NEUTERED = {"NONE", "DISABLED", ""}` —
+# and one indirection walked past it:
+#
+#     locals { pa_strength = "NONE" }
+#     filters_config { type = "PROMPT_ATTACK"  input_strength = local.pa_strength }
+#
+# The parser returns the unevaluated expression `"${local.pa_strength}"`, which is not in
+# the blacklist, so the filter read as ACTIVE while being off. Seven tests passed with
+# PROMPT_ATTACK and PII redaction both disabled. `locals`/`var` indirection is idiomatic
+# Terraform, not sabotage.
+#
+# A blacklist has to enumerate every way to be wrong; an allowlist enumerates the few ways
+# to be right, so anything unrecognised — an indirection, a typo, a new AWS value — fails
+# CLOSED. Replacing "assert the string is in the file" with "assert the value is not in
+# this set of bad strings" is a better test of the same kind, and it fails the same way.
+ACTIVE_FILTER_STRENGTHS = {"LOW", "MEDIUM", "HIGH"}
+REDACTING_PII_ACTIONS = {"ANONYMIZE", "BLOCK"}
 
 
 @pytest.fixture(scope="module")
@@ -160,9 +176,11 @@ def test_prompt_attack_filter_is_declared_and_active_on_input(guardrail):
     match = [f for f in filters if f["type"] == "PROMPT_ATTACK"]
     assert match, "the prompt-attack filter is gone, but policy.py still claims it blocks"
     strength = match[0].get("input_strength", "")
-    assert strength not in NEUTERED, (
-        f"PROMPT_ATTACK is declared but input_strength={strength!r} — it is switched off "
-        "while the red-team report still reports it as covering prompt injection"
+    assert strength in ACTIVE_FILTER_STRENGTHS, (
+        f"PROMPT_ATTACK input_strength is {strength!r}, which is not one of "
+        f"{sorted(ACTIVE_FILTER_STRENGTHS)}. Either it is switched off, or it is an "
+        "indirection (`local.x`, `var.y`) this test cannot evaluate — and a control whose "
+        "state cannot be read here is a control this test is not checking. Write the value."
     )
 
 
@@ -182,8 +200,11 @@ def test_pii_entities_match_the_policy_model_and_are_anonymised(guardrail):
         "deployed"
     )
     for entity in modelled:
-        assert declared[entity] not in NEUTERED, (
-            f"PII entity {entity} is declared with action={declared[entity]!r} — declared but inert"
+        assert declared[entity] in REDACTING_PII_ACTIONS, (
+            f"PII entity {entity} has action={declared[entity]!r}, which is not one of "
+            f"{sorted(REDACTING_PII_ACTIONS)} — it is declared but not redacting, or it is "
+            "an indirection this test cannot evaluate. Either way the dataset card's "
+            "anonymisation promise is not backed by the deployed policy."
         )
 
 
