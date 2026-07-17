@@ -34,13 +34,17 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc" {
   policy_arn = "arn:${local.partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
-# Scoped: read the project secrets (Databricks token) + decrypt them with the CMK.
+# Scoped: read the ONE secret the Lambda needs (Databricks token) + decrypt it with the CMK.
 data "aws_iam_policy_document" "lambda_inline" {
   statement {
-    sid       = "ReadProjectSecrets"
-    effect    = "Allow"
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [for s in aws_secretsmanager_secret.this : s.arn]
+    sid     = "ReadDatabricksToken"
+    effect  = "Allow"
+    actions = ["secretsmanager:GetSecretValue"]
+    # The Databricks token ARN only — was `for s in ...this : s.arn`, which is EVERY project
+    # secret including `langsmith/api-key`. `secrets.tf` even said "the Lambda's IAM scopes
+    # that read to the databricks/token secret ARN only", so this was a comment denying the
+    # over-grant it sat above. The Lambda has no business reading the LangSmith key.
+    resources = [aws_secretsmanager_secret.this["databricks/token"].arn]
   }
 
   statement {

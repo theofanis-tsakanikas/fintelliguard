@@ -690,10 +690,7 @@ ATTACKS: tuple[Attack, ...] = (
             "grep because the policy lives inside jsonencode()."
         ),
         path="agents/bedrock/terraform/knowledge_base.tf",
-        old=(
-            "    AllowFromPublic = false\n"
-            "    SourceVPCEs     = [aws_opensearchserverless_vpc_endpoint.kb.id]"
-        ),
+        old="    AllowFromPublic = false",
         new="    AllowFromPublic = true",
         gate="tests/agents/bedrock/test_knowledge_base_security.py",
         must_fail="test_the_regulatory_corpus_is_not_reachable_from_the_public_internet",
@@ -705,8 +702,8 @@ ATTACKS: tuple[Attack, ...] = (
             "that does not exist locks out the Knowledge Base itself."
         ),
         path="agents/bedrock/terraform/knowledge_base.tf",
-        old="SourceVPCEs     = [aws_opensearchserverless_vpc_endpoint.kb.id]",
-        new="SourceVPCEs     = [aws_opensearchserverless_vpc_endpoint.deleted.id]",
+        old="SourceVPCEs    = [aws_opensearchserverless_vpc_endpoint.kb.id]",
+        new="SourceVPCEs    = [aws_opensearchserverless_vpc_endpoint.deleted.id]",
         gate="tests/agents/bedrock/test_knowledge_base_security.py",
         must_fail="test_the_private_network_rule_points_at_a_vpc_endpoint_that_exists",
     ),

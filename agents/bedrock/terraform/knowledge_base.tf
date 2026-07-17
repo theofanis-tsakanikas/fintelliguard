@@ -87,7 +87,13 @@ resource "aws_opensearchserverless_security_policy" "network" {
       { Resource = ["collection/${local.collection_name}"], ResourceType = "dashboard" },
     ]
     AllowFromPublic = false
-    SourceVPCEs     = [aws_opensearchserverless_vpc_endpoint.kb.id]
+    # Two source paths, and BOTH are needed. The VPC endpoint is how our own principals
+    # (ingestion, admin) reach the collection privately. `SourceServices = bedrock` is how
+    # the Bedrock Knowledge Base reaches it — Bedrock queries from the Bedrock service
+    # network, not from our VPC, so with `SourceVPCEs` alone the lockdown locked out the one
+    # principal that has to get in, and KB creation/ingestion would fail.
+    SourceServices = ["bedrock.amazonaws.com"]
+    SourceVPCEs    = [aws_opensearchserverless_vpc_endpoint.kb.id]
   }])
 }
 
@@ -127,6 +133,36 @@ resource "aws_opensearchserverless_access_policy" "kb" {
   }])
 }
 
+# ---- The vector index the KB requires to pre-exist --------------------------
+#
+# Bedrock does NOT create the index; it expects it to already exist with the exact field
+# mapping below, and `aws_bedrockagent_knowledge_base` fails at apply if it does not. There
+# is no first-class AWS-provider resource for an AOSS vector index (it is a data-plane
+# object, created over the collection's HTTPS endpoint with SigV4), so this was simply
+# missing and the KB could never have applied.
+#
+# A provisioner is the honest wiring: the index-creation call lives in a committed,
+# reviewable script (`scripts/create_kb_index.py`), runs after the collection and its access
+# policy exist, and the KB depends on it — so the apply graph has the ordering the API
+# requires. It is not a console click; it is IaC that happens to use the data plane.
+resource "null_resource" "kb_vector_index" {
+  triggers = {
+    collection = aws_opensearchserverless_collection.kb.id
+    index      = var.kb_vector_index_name
+  }
+
+  provisioner "local-exec" {
+    command = "python3 ${path.module}/scripts/create_kb_index.py"
+    environment = {
+      AOSS_ENDPOINT = aws_opensearchserverless_collection.kb.collection_endpoint
+      INDEX_NAME    = var.kb_vector_index_name
+      AWS_REGION    = local.region
+    }
+  }
+
+  depends_on = [aws_opensearchserverless_access_policy.kb]
+}
+
 # ---- Bedrock Knowledge Base + S3 data source --------------------------------
 resource "aws_bedrockagent_knowledge_base" "this" {
   name     = "${local.name}-regulations"
@@ -152,7 +188,11 @@ resource "aws_bedrockagent_knowledge_base" "this" {
     }
   }
 
-  depends_on = [aws_opensearchserverless_access_policy.kb]
+  # The index must exist before the KB references it.
+  depends_on = [
+    aws_opensearchserverless_access_policy.kb,
+    null_resource.kb_vector_index,
+  ]
 }
 
 resource "aws_bedrockagent_data_source" "regulations" {

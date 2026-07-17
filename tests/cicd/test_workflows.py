@@ -309,3 +309,27 @@ def test_every_offered_environment_has_a_bundle_target():
             f"infra/bundles/databricks.yml does not declare (it has {sorted(declared)}) — "
             "the deploy fails part-way through, after real infrastructure has changed"
         )
+
+
+def test_the_oidc_deploy_role_is_defined_in_terraform_and_sub_scoped():
+    """The most privileged identity in the system must be reviewable and pinned.
+
+    The workflows assume `AWS_DEPLOY_ROLE_ARN`, and for a while that role was defined in no
+    Terraform at all — so the credential that applies IAM, KMS and VPCs across three layers
+    was unreviewable, and its trust condition (the thing that stops any fork with
+    `id-token: write` assuming it) could not be read. "IaC only" was violated by the one
+    credential that matters most.
+    """
+    oidc = (_WORKFLOWS.parents[1] / "infra" / "aws" / "bootstrap" / "oidc.tf").read_text(
+        encoding="utf-8"
+    )
+    assert "aws_iam_openid_connect_provider" in oidc, "no OIDC provider is defined"
+    assert "token.actions.githubusercontent.com:sub" in oidc, (
+        "the trust policy does not condition on `sub` — any repo/branch/fork with "
+        "id-token: write could assume this role"
+    )
+    # The sub must pin to a specific repo, not a bare wildcard.
+    assert "repo:${var.github_repository}" in oidc
+    assert ":ref:refs/heads/*" not in oidc and "sub:*" not in oidc, (
+        "the sub condition is a wildcard — it trusts every branch and every PR"
+    )

@@ -55,6 +55,55 @@ data "aws_iam_policy_document" "kms" {
     }
   }
 
+  # CloudWatch Logs encrypts the VPC flow-log group (infra/aws/network.tf) with this key,
+  # and it uses the SERVICE principal, not the account root scoped by kms:ViaService — so
+  # without this statement `CreateLogGroup` returns "KMS key ... is not allowed" and the
+  # flow-log group cannot be created. Scoped to log groups in this account and region.
+  statement {
+    sid    = "AllowCloudWatchLogs"
+    effect = "Allow"
+    actions = [
+      "kms:Encrypt*",
+      "kms:Decrypt*",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:Describe*",
+    ]
+    resources = ["*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["logs.${local.region}.${local.dns_suffix}"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "kms:EncryptionContext:aws:logs:arn"
+      values   = ["arn:${local.partition}:logs:${local.region}:${local.account_id}:log-group:*"]
+    }
+  }
+
+  # OpenSearch Serverless encrypts the KB vector collection (agents/bedrock/terraform) with
+  # this key, again via the service principal. Without it the collection's encryption policy
+  # (AWSOwnedKey = false) cannot use the key and the collection fails to create.
+  statement {
+    sid    = "AllowOpenSearchServerless"
+    effect = "Allow"
+    actions = [
+      "kms:Encrypt",
+      "kms:Decrypt",
+      "kms:GenerateDataKey*",
+      "kms:DescribeKey",
+      "kms:CreateGrant",
+    ]
+    resources = ["*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["aoss.${local.dns_suffix}"]
+    }
+  }
+
   # Grants for AWS-managed resources that encrypt on your behalf (e.g. MSK storage).
   statement {
     sid    = "AllowGrantsForAWSResources"

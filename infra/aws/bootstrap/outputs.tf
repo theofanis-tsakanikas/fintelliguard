@@ -12,3 +12,8 @@ output "region" {
   description = "Region of the backend resources — set as `backend.region`."
   value       = var.aws_region
 }
+
+output "github_deploy_role_arn" {
+  description = "Set this as the AWS_DEPLOY_ROLE_ARN GitHub secret — the OIDC role the workflows assume."
+  value       = aws_iam_role.deploy.arn
+}
