@@ -11,7 +11,7 @@ TF_DIR  ?= infra/aws/bootstrap
 PY      := $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help fmt lint test guardrail-scan gate-proof iac-scan govern-docs e2e e2e-down plan apply
+.PHONY: help fmt lint test guardrail-scan gate-proof gate-attack iac-scan govern-docs e2e e2e-down plan apply
 
 COMPOSE := docker compose -f deploy/local/docker-compose.yml
 
@@ -34,6 +34,9 @@ guardrail-scan: ## Run the guardrail red-team coverage gate
 
 gate-proof: ## Attack our own gates: plant real violations, prove each gate refuses them
 	$(PY) -m scripts.gate_proof
+
+gate-attack: ## Narrated walkthrough of the gates REFUSING real violations (ARGS=--fast to skip pauses)
+	$(PY) -m scripts.gate_demo $(ARGS)
 
 # NOT `$(PY) -m checkov`: checkov depends on `bc-python-hcl2`, an old fork that installs
 # over the SAME `hcl2` package directory this repo's Terraform tests import. Putting it in

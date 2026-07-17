@@ -71,3 +71,58 @@ def test_the_pattern_has_exactly_one_definition():
         f"the card-number pattern is defined in {[p.name for p in copies]} — it belongs in "
         "agents/bedrock/pii.py alone"
     )
+
+
+def test_a_uuid_is_not_a_card_number():
+    """Found by gate_proof, which is the point of gate_proof.
+
+    A randomly generated correlation id —
+
+        9e988812-2850-4531-8c49-c36e1c2e94be
+
+    contains `988812-2850-4531-8`: fifteen digits with hyphens, matching the candidate
+    pattern exactly. So the decision log refused to record a decision roughly one time in N,
+    depending on which UUID it happened to draw. It read as a flaky test; it was a PII
+    detector with a random false-positive rate.
+    """
+    assert not contains_pii("decision 9e988812-2850-4531-8c49-c36e1c2e94be recorded"), (
+        f"a UUID was reported as a card number: {found_pii('9e988812-2850-4531-8c49-c36e1c2e94be')}"
+    )
+
+
+def test_no_uuid_is_ever_a_card_number():
+    """The property, not one example: a flaky detector needs more than one draw to catch."""
+    import uuid
+
+    offenders = [
+        str(u) for _ in range(3000) if contains_pii(f"decision {(u := uuid.uuid4())} recorded")
+    ]
+    assert not offenders, (
+        f"{len(offenders)}/3000 correlation ids read as card numbers: {offenders[:3]}"
+    )
+
+
+def test_no_computed_feature_value_is_ever_a_card_number():
+    """The property, because three hand-picked floats are not a test.
+
+    `amount_log`, `amount_zscore` and `amount_sum_1h` all render with long mantissas, and
+    every decision record carries them. Luhn alone is not enough here: it accepts about one
+    random digit run in ten, so ~10% of float mantissas pass it. The three literal examples
+    above happened to fail Luhn, which made the boundary rule look redundant — it is not,
+    and this is the test that says so.
+    """
+    import random
+
+    random.seed(7)
+    values = [f"amount_log is {random.uniform(1, 10):.17f}" for _ in range(5000)]
+    offenders = [v for v in values if contains_pii(v)]
+    assert not offenders, (
+        f"{len(offenders)}/5000 feature values read as card numbers, e.g. {offenders[:2]} — "
+        "every decision record carries values like these"
+    )
+
+
+def test_a_digit_run_that_fails_the_luhn_checksum_is_not_a_card():
+    """What separates a card number from a lot of digits."""
+    assert not contains_pii("reference 1234567890123456 attached")  # fails Luhn
+    assert contains_pii("card 4111111111111111 flagged")  # the classic test Visa, valid

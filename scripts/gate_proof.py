@@ -203,6 +203,33 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/agents/bedrock/guardrails/test_guardrail_attachment.py",
         must_fail="test_denied_topics_match_the_policy_model",
     ),
+    # --- the data-quality gates ---------------------------------------------- #
+    Attack(
+        name="dq-expectations-on-prefiltered-rows",
+        rationale=(
+            "What shipped: @dlt.expect_all on a frame select_valid had already filtered. "
+            "The data-quality dashboard read 100% pass permanently, by construction — it "
+            "would have read 100% during a total upstream corruption event."
+        ),
+        path="pipelines/silver/silver_pipeline.py",
+        old=(
+            "def transactions_gated() -> DataFrame:\n"
+            "    # Unfiltered on purpose: a row that fails a gate must still BE here, or the"
+            " expectation\n"
+            "    # below has nothing to fail on.\n"
+            "    return silver_transforms.cleanse_transactions("
+            'dlt.read_stream("bronze.transactions_stream"))'
+        ),
+        new=(
+            "def transactions_gated() -> DataFrame:\n"
+            "    return silver_transforms.select_valid(\n"
+            "        silver_transforms.cleanse_transactions("
+            'dlt.read_stream("bronze.transactions_stream"))\n'
+            "    )"
+        ),
+        gate="tests/pipelines/test_dq_expectations.py",
+        must_fail="test_the_dq_metric_can_be_less_than_one_hundred_percent",
+    ),
     # --- the self-healing agent ---------------------------------------------- #
     Attack(
         name="medic-promotes-staging-to-production",
@@ -322,10 +349,31 @@ ATTACKS: tuple[Attack, ...] = (
             "output, with a published false-positive rate."
         ),
         path="agents/bedrock/pii.py",
-        old=r'CARD_NUMBER = r"(?<![\d.])(?:\d[ -]?){13,19}(?!\.?\d)"',
-        new=r'CARD_NUMBER = r"\b(?:\d[ -]?){13,19}\b"',
+        old=(
+            "_CARD_CANDIDATE = re.compile("
+            r'r"(?<![-\d.A-Za-z])(?:\d[ -]?){13,19}(?![A-Za-z])(?!\.?\d)")'
+        ),
+        new=r'_CARD_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")',
         gate="tests/agents/bedrock/test_pii.py",
-        must_fail="test_arithmetic_is_not_pii",
+        # NOT test_arithmetic_is_not_pii: its three literal floats happen to fail Luhn, so
+        # they pass even with the boundary rule gone. gate_proof reported LEAKED until the
+        # gate was a property test over many values — where ~10% of mantissas slip through
+        # Luhn and the rule proves necessary.
+        must_fail="test_no_computed_feature_value_is_ever_a_card_number",
+    ),
+    Attack(
+        name="pii-detector-drops-the-luhn-check",
+        rationale=(
+            "Without Luhn the detector means 'a lot of digits', not 'a card number'. "
+            "gate_proof found this: a random UUID contains a 15-digit hyphenated run, so "
+            "the audit log refused to record roughly one decision in ten thousand, at "
+            "random — a PII detector with a coin-flip false-positive rate."
+        ),
+        path="agents/bedrock/pii.py",
+        old="    return 13 <= len(digits) <= 19 and _luhn_valid(digits)",
+        new="    return 13 <= len(digits) <= 19",
+        gate="tests/agents/bedrock/test_pii.py",
+        must_fail="test_a_digit_run_that_fails_the_luhn_checksum_is_not_a_card",
     ),
     Attack(
         name="decision-log-drops-the-model-version",
