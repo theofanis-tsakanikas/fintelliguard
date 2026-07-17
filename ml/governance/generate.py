@@ -228,6 +228,13 @@ def render_ai_act() -> str:
         "an immutable policy version, so every verdict is attributable to a fixed set of "
         "rules; a test asserts the binding resolves, because the guardrail was once "
         "provisioned and never attached.",
+        "- **Indirect prompt injection.** The regulatory corpus is screened at ingestion "
+        "(`agents/bedrock/kb/chunking.py`): a document the guardrail would block — one that "
+        "instructs rather than describes, or carries personal data — is refused before it is "
+        "embedded, so a poisoned regulation cannot be retrieved into a verdict's context as "
+        "authority. Both system prompts additionally instruct the agent that retrieved text "
+        "is data, never instructions. The red-team set exercises this `retrieved` surface "
+        "through the real screen.",
         "- **Scope of the offline red-team score.** `agents/bedrock/guardrails/policy.py` is "
         "a signature model standing in for Bedrock's ML classifier so threat coverage can be "
         "regression-tested in CI without calling AWS. Its detectors were written from the "
@@ -235,7 +242,9 @@ def render_ai_act() -> str:
         f"{cov.adversarial} figure in the [coverage report](GUARDRAIL_COVERAGE.md) measures "
         "that the model is wired to its test set — **not** the classifier that runs in "
         "production, and not a safety property. It is quoted here as a regression score and "
-        "must not be read as a measured block rate.",
+        "must not be read as a measured block rate. Real evasions the offline model does not "
+        "catch (encodings, multilingual, obfuscated PANs) are pinned as known gaps in "
+        "`tests/agents/bedrock/test_pii.py`, not left silent.",
         "- **Output verdict gate** — every compliance verdict must pass deterministic checks "
         "before "
         f"reaching an analyst: {', '.join(REQUIRED_FIELDS)} present, no raw PII, every regulatory "

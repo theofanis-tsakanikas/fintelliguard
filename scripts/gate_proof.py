@@ -626,6 +626,20 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/agents/bedrock/test_knowledge_base_security.py",
         must_fail="test_the_kb_data_policy_names_a_principal_and_a_scoped_resource",
     ),
+    Attack(
+        name="kb-ingests-a-poisoned-document",
+        rationale=(
+            "Indirect prompt injection. The corpus was read straight into the vector store "
+            "with no validation, while the system prompt tells the agent to ground every "
+            "claim in retrieved text — so a document that INSTRUCTS is retrieved as "
+            "authority. The guardrail already blocked that text; the ingester never asked."
+        ),
+        path="agents/bedrock/kb/chunking.py",
+        old="        if reason := screen_document(text, policy):",
+        new="        if False:",
+        gate="tests/agents/bedrock/test_chunking.py",
+        must_fail="test_a_poisoned_regulatory_document_is_refused_at_ingestion",
+    ),
     # --- the knowledge base -------------------------------------------------- #
     Attack(
         name="kb-exposed-to-internet",

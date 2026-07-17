@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from agents.bedrock.guardrails.policy import GuardrailPolicy
+from agents.bedrock.guardrails.policy import GuardrailDecision, GuardrailPolicy
 from agents.bedrock.guardrails.redteam import RedTeamCase, redteam_cases
 
 
@@ -53,6 +53,18 @@ def evaluate_case(policy: GuardrailPolicy, case: RedTeamCase) -> CaseResult:
     """Evaluate one probe against the policy on its declared surface."""
     if case.surface == "output":
         decision = policy.evaluate_output(case.prompt)
+    elif case.surface == "retrieved":
+        # Scored through the REAL ingestion screen, not a re-implementation of it: the
+        # question is whether a poisoned document gets into the vector store, and
+        # `screen_document` is what decides that.
+        from agents.bedrock.kb.chunking import screen_document
+
+        reason = screen_document(case.prompt, policy)
+        decision = GuardrailDecision(
+            blocked=reason is not None,
+            policy=reason.split(":")[0] if reason else None,
+            reason=reason or "",
+        )
     else:
         decision = policy.evaluate_input(case.prompt)
     return CaseResult(
