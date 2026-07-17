@@ -11,7 +11,7 @@ TF_DIR  ?= infra/aws/bootstrap
 PY      := $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help fmt lint test guardrail-scan govern-docs e2e e2e-down plan apply
+.PHONY: help fmt lint test guardrail-scan gate-proof govern-docs e2e e2e-down plan apply
 
 COMPOSE := docker compose -f deploy/local/docker-compose.yml
 
@@ -31,6 +31,9 @@ test: ## Run the test suite
 
 guardrail-scan: ## Run the guardrail red-team coverage gate
 	$(PY) -m agents.bedrock.guardrails.evaluate
+
+gate-proof: ## Attack our own gates: plant real violations, prove each gate refuses them
+	$(PY) -m scripts.gate_proof
 
 govern-docs: ## Regenerate the model/dataset cards + AI-Act technical docs
 	$(PY) -m ml.governance.generate

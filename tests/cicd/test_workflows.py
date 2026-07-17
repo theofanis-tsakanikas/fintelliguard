@@ -64,6 +64,25 @@ def test_ci_reproduces_local_gates():
         assert command in text, f"ci.yml missing: {command}"
 
 
+def test_ci_enforces_the_responsible_ai_gates():
+    """The gates CLAUDE.md calls CI-enforced must actually be steps in CI.
+
+    This test existed and omitted exactly these three commands, so deleting the
+    Responsible-AI step from `ci.yml` left the whole suite green — the gates were
+    "CI-enforced" by assertion only. They are the ones that most need pinning.
+    """
+    text = _text("ci")
+    for command in [
+        # the guardrail red-team coverage gate
+        "python -m agents.bedrock.guardrails.evaluate",
+        # the generated governance docs must match the code
+        "python -m ml.governance.generate --check",
+        # and the gates themselves must be provably able to fail
+        "python -m scripts.gate_proof",
+    ]:
+        assert command in text, f"ci.yml no longer runs the Responsible-AI gate: {command}"
+
+
 def test_ci_validates_every_terraform_layer():
     text = _text("ci")
     for layer in [

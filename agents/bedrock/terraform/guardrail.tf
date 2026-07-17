@@ -60,3 +60,18 @@ resource "aws_bedrock_guardrail" "this" {
 
   tags = { Name = "${local.name}-guardrail" }
 }
+
+# An immutable, numbered snapshot of the policy above.
+#
+# The agent binds to THIS, never to DRAFT. DRAFT mutates in place, so an agent bound to it
+# has no stable answer to "which policy was in force when this verdict was issued?" — the
+# question an auditor asks first. Every apply that changes the policy mints a new version,
+# and `agent.tf` re-points the binding, so each decision is attributable to a frozen policy.
+resource "aws_bedrock_guardrail_version" "this" {
+  guardrail_arn = aws_bedrock_guardrail.this.guardrail_arn
+  description   = "Policy snapshot bound to the fraud-investigator agent."
+
+  # Keep superseded versions: a destroyed version cannot be produced as evidence for a
+  # decision that was made while it was in force.
+  skip_destroy = true
+}
