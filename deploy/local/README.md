@@ -25,7 +25,7 @@ simulator ──▶ Kafka (txn.raw) ──▶ streaming scorer ──▶ Prometh
 - **`simulator`** — `python -m simulator --sink kafka` at ~30 txns/sec, realistic ~1% fraud.
 - **`scorer`** — `ml.serving.stream_service`: trains a demo XGBoost from the simulator on
   startup (`ml.serving.local_model` — the local analogue of the deferred IEEE-CIS bootstrap),
-  then consumes the topic, computes the 15 features, scores + explains (TreeSHAP), runs
+  then consumes the topic, computes the 14 features, scores + explains (TreeSHAP), runs
   flagged cases through the real verdict gate + output guardrail, and exposes `/metrics` on
   `:8000` with the exact series the dashboards query.
 - **`prometheus`** — scrapes the scorer.
