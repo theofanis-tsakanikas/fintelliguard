@@ -2,12 +2,20 @@
 
 The window/state features (velocities, distinct counts, card age, device-seen, country
 mismatch, unusual hour) are PURE functions over a per-card history passed in as a plain
-list of prior contract dicts — NO Spark here. `pipelines/gold` will supply that history
-via Spark Structured Streaming (`flatMapGroupsWithState` + sliding windows) and call
-these functions, so the logic is identical and testable today.
+list of prior contract dicts — NO Spark here. `pipelines/gold` supplies that history and
+calls these functions, so the logic is identical everywhere and testable today.
 
-No target leakage: only transactions strictly BEFORE the current one are used. The
-history is defensively filtered by timestamp, so a caller cannot leak the future.
+`pipelines/gold` replays each card's events in time order over a full-table recompute.
+The stateful-streaming execution (`flatMapGroupsWithState` + watermarks) this docstring
+used to describe as fact is designed and not built — see `docs/features.md`. What the
+recompute does honour is the semantics below.
+
+No target leakage: only transactions strictly BEFORE the current one are used. The history
+is defensively filtered by timestamp, so a caller cannot leak the future. The IEEE training
+path did leak — it computed its per-card aggregates over the whole group, future included —
+until `pipelines/gold/gold_transforms.py` was given an expanding window; that promise is now
+true on both sides of the boundary, and `tests/pipelines/test_gold.py` proves it by adding
+a later transaction and requiring the earlier rows not to move.
 """
 
 from __future__ import annotations

@@ -49,5 +49,6 @@ ruff check .
 The `*_pipeline.py` modules (the `@dlt.*` decorator layer) are **import/lint-validated
 only** here — a test stubs `dlt` and asserts the table functions register. Full **DLT +
 Structured Streaming execution** — checkpointing, watermarking, stateful streaming
-(`flatMapGroupsWithState`), Auto Loader, Kafka — runs only on Databricks and is deferred
+(designed as `flatMapGroupsWithState`; today a full-table recompute — see docs/features.md),
+Auto Loader, Kafka — runs only on Databricks and is deferred
 to the deploy phase.

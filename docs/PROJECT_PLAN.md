@@ -65,7 +65,7 @@ They converge only at the Model Serving endpoint. The same 15 features → elimi
 
 ## 6. The 15 Gold features
 
-Full definition: see `docs/features.md`. Categories: Amount (3), Velocity (4), Identity/Device (3), Geography (2), Merchant (2), Temporal (1). Semantic features with a per-source adapter (stream / IEEE-CIS). State management via flatMapGroupsWithState + checkpointing. We do not use V1-339 (not explainable).
+Full definition: see `docs/features.md`. Categories: Amount (3), Velocity (4), Identity/Device (3), Geography (2), Merchant (2), Temporal (1). Semantic features with a per-source adapter (stream / IEEE-CIS). State management designed as flatMapGroupsWithState + checkpointing (not built — Gold is a full-table recompute today; see docs/features.md). We do not use V1-339 (not explainable).
 
 ---
 

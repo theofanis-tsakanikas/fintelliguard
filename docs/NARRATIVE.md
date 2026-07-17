@@ -60,9 +60,19 @@ Neither is forced. Each is where it belongs.
 
 ---
 
-## What this platform is not
+## What this platform is, and is not
 
-It is not a proof of concept: least-privilege IAM, vaulted secrets, KMS encryption, private networking, and exactly-once DLT semantics throughout. It is not a demo that runs once: checkpointing, health checks, rollback, and end-to-end tracing. And it is not a tutorial follow-along — there is no reference implementation for a Bedrock Agent calling a Mosaic AI Model Serving endpoint as a Tool. That integration was designed from first principles.
+It is not a tutorial follow-along: there is no reference implementation for a Bedrock Agent calling a Mosaic AI Model Serving endpoint as a Tool, and that integration was designed from first principles. Least-privilege IAM, vaulted secrets, KMS encryption and quarantine-not-drop DLT routing are real and tested.
+
+It is also **not deployed**, and several things this document once claimed as accomplished were not. The honest scope is in [`README.md`](../README.md#project-status); the short version:
+
+- **Gold is a full-table recompute**, not `flatMapGroupsWithState` streaming state. The stream adapter is pure and windowed; the stateful streaming execution described in [`features.md`](features.md) is a design, not code.
+- **The Feature Store online path is a spec**, not a lookup. There is no <5ms online store.
+- **LangSmith traces the self-healing graph only** — not the Bedrock verdict path and not the copilot, which are the two paths that produce regulated output.
+- **PrivateLink is ready, not on.** The VPC endpoint is `count = 0` unless a service name is supplied.
+- **The Tier-2 reasoner is stubbed locally.** Everything that *judges* a verdict — the acceptance gate, the guardrail — is the shipping code.
+
+That list exists because the gap between what this repository said and what it did was, for a while, its most serious defect. A guardrail was declared in Terraform and never attached to the agent; a feature was documented as a lookup and served as the constant 0.0; a data-quality metric read 100% because the rows that could fail it had already been filtered out. All three were green in CI. The controls are real now, and `make gate-attack` breaks each one on purpose so you can watch it refuse — because a claim you can attack is worth more than a claim you can only read.
 
 ---
 

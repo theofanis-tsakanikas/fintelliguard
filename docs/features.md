@@ -90,9 +90,11 @@ The two data sources have fundamentally different schemas:
 
 Features 3, 8, 9, 11, 15 require **per-card historical state** (e.g. historical mean amount, first seen, usual country). This does not exist in a raw stream event.
 
-**Solution:** Spark Structured Streaming with stateful aggregation (`flatMapGroupsWithState`) + checkpointing. Per-card state is kept in a state store and updated on each event. Checkpointing ensures exactly-once and survival across restarts.
+**Designed solution:** Spark Structured Streaming with stateful aggregation (`flatMapGroupsWithState`) + checkpointing — per-card state in a state store, updated per event, exactly-once across restarts. Features 4, 5, 6, 7, 10, 12 would be sliding-window aggregations with watermarking for late events.
 
-Features 4, 5, 6, 7, 10, 12 are **window aggregations** (sliding windows), computed with watermarking to handle late-arriving events.
+> **What is actually built.** `grep flatMapGroupsWithState` across this repository returns this paragraph and one docstring, and nothing else. There is no watermark anywhere either. `pipelines/gold` uses `dlt.read` — a **full-table recompute** — with a per-card `applyInPandas` that replays each card's history in time order. The feature *semantics* are therefore correct and prior-only (that is what `ml/features/adapter_stream.py` guarantees and what `tests/features/test_parity_distributional.py` proves), but the execution model is batch, not streaming state.
+>
+> Two honest consequences: a card's whole history must fit in one executor's memory as a pandas frame, and the per-row rescan of prior events makes it O(n²) per card. Out-of-order arrival does not corrupt anything today only because a full recompute has no notion of order to corrupt. This is a real deferral, not a detail — it is named here because a design documented as if it were code is how the rest of this repository's claims went wrong.
 
 ---
 

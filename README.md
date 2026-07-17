@@ -66,62 +66,100 @@ See [`docs/NARRATIVE.md`](docs/NARRATIVE.md) for the *why*, and
 | ML serving | Mosaic AI Model Serving (REST, autoscale) — real XGBoost + TreeSHAP scorer, live in the local funnel |
 | Real-time AI (Tier 2) | AWS Bedrock Agent · Knowledge Bases · Guardrails · Claude (Haiku 4.5 → Sonnet 4.6) — the *reasoner* is deferred to AWS; the verdict-acceptance gate + guardrail are real & CI-tested |
 | Investigation AI (Tier 3) | Mosaic AI Agent Framework · Vector Search · Genie · Agent Evaluation |
-| Self-healing | LangGraph Supervisor + Medic · LangSmith tracing *(config-ready, off by default — deferred)* |
+| Self-healing | LangGraph Supervisor + Medic — bounded: rollback restricted to previously-promoted versions that still pass the promotion gate, a confirmation window before acting on latency, a hard action cap, durable retry state · LangSmith traces the healing graph only *(off by default; the Bedrock/copilot paths are NOT traced — deferred)* |
 | IaC | Terraform (3 isolated layers) · Databricks Asset Bundles |
 | CI/CD | GitHub Actions |
 | Observability | Grafana · Prometheus — **live in the local end-to-end** (`make e2e`): the scorer emits the metrics the dashboards query · LangSmith *(deferred)* |
 
 ## Engineering highlights
 
-- **Feature parity by construction.** One canonical 15-feature schema; two adapters
-  (stream + IEEE-CIS) that *must* produce it. A single source of truth eliminates
-  training-serving skew — proven by an end-to-end test that compares both adapters.
-- **No target leakage, proven.** Window/state features use only transactions strictly
-  *before* the current one; a test feeds a future-dated event and asserts it is ignored.
+- **Feature parity proven by independent paths.** One canonical schema for names and types,
+  and — the half that was missing — one canonical *semantics* (`ml/features/semantics.py`),
+  because both adapters satisfied the schema completely while disagreeing about what the
+  numbers meant. One synthetic card journey is encoded two ways and run through both
+  adapters; the vectors must match. A parity test means something only when the two sides
+  are derived by paths that CAN disagree.
+- **No target leakage, proven on both sides.** Window/state features use only transactions
+  strictly *before* the current one — at serving AND at training, where the per-card
+  aggregates were once computed over the whole group, future included. The test adds a
+  later transaction and requires the earlier rows not to move.
 - **Cross-cloud contract fidelity.** The Bedrock action-group Lambda's output equals the
   `ml/serving` scorer's output byte-for-byte — asserted in tests, so the two clouds stay
   in sync through the contract.
 - **Per-prediction explanations.** `top_features` are exact **TreeSHAP** contributions
   (XGBoost `pred_contribs`) — *why this transaction* scored as it did, not global
   importance — feeding the agent's regulated reasoning.
-- **Self-healing.** A LangGraph Supervisor + Medic classifies health signals and applies
-  deterministic, **idempotent** remediation (endpoint p99 > 200 ms → roll back to the
-  previous model version; lag → scale; pipeline failure → retry-then-escalate).
-- **Security by default.** Least-privilege IAM (no authored wildcards), customer-managed
-  KMS, private VPC endpoints for the cross-cloud call, secrets only in AWS Secrets
-  Manager / Databricks secret scopes, and **Guardrails** (PII redaction + grounding) on
-  every regulated verdict.
-- **Proven guardrails, not just configured.** A labelled **red-team set** (prompt-injection,
-  jailbreak, out-of-scope, PII-leak) is run against the guardrail policy in CI — 16/16
-  adversarial probes blocked, 0 benign false positives — and the test parses `guardrail.tf`
-  so removing a policy class fails the build.
-- **Verdict acceptance gate.** Every Tier-2 compliance verdict passes five deterministic
-  checks before reaching an analyst — schema, no raw PII, **grounding** (cited regulations
-  must exist in the retrieved context), **faithfulness** (drivers must be the model's actual
-  `top_features`), and decision consistency. The hard floor under the LLM.
-- **Drift-monitored.** PSI + two-sample KS per feature with alert thresholds catch silent
-  distribution shift before it degrades the score.
+- **Self-healing, with bounds that are tested.** A LangGraph Supervisor + Medic classifies
+  health signals and applies deterministic, idempotent remediation — and is not trusted
+  further than that: it may restore only a version that was itself in Production and still
+  clears the promotion gate (a rollback is a promotion), a latency breach must persist
+  across consecutive samples before it can move a model, and each healing thread has a hard
+  action ceiling past which it pages a human instead of acting.
+- **Security by default.** Least-privilege IAM (no authored wildcards — enforced by test,
+  not by comment), customer-managed KMS, the regulatory vector store reachable only through
+  a VPC endpoint, VPC flow logs, OIDC in every cloud workflow (no static keys), secrets only
+  in AWS Secrets Manager / Databricks secret scopes, and **Guardrails** bound to the agent
+  at an immutable policy version — with a test that the binding resolves, because it once
+  did not. `make iac-scan` runs checkov; every skip carries its reason.
+  *PrivateLink to the Mosaic endpoint is ready but off by default (`count = 0` without a
+  service name) — see [docs/DEPLOY.md](docs/DEPLOY.md).*
+- **Guardrails proven attached, not just configured.** A labelled red-team set runs against
+  the offline guardrail policy model in CI. **Scope, stated plainly:** that model is a
+  signature stand-in for Bedrock's classifier whose detectors were written from the probes
+  they are scored against, so its block rate is a *regression score*, not a measured safety
+  property — it is not quoted as one. What IS proven is the deployed shape: that the
+  guardrail is bound to the agent, at an immutable version, with every policy class enabled
+  and its thresholds matching the model.
+- **Verdict acceptance gate.** Five deterministic checks before a Tier-2 verdict reaches an
+  analyst: schema, no raw PII, **grounding** (every cited *provision* must appear in the
+  retrieved context — set membership, not substring containment, so a fabricated article
+  appended to a real one is refused), **faithfulness** (the verdict declares its drivers and
+  they must be the model's actual `top_features` — prose cannot decide this), and
+  **direction** (the agent may escalate with a reason and may never soften: releasing a
+  transaction the model flagged is a human decision).
+- **Decision records.** Every scored transaction — not only the flagged ~1% — writes one
+  replayable record: input → the 15 features → `model_version`, score and `top_features` →
+  the verdict, the gate result and the guardrail outcome, under a correlation id, refusing
+  to be written if it would carry raw PII. So "which model decided this transaction, and
+  what did its card say?" has an answer (AI Act Art. 12).
+- **Drift detection.** PSI + two-sample KS per feature with alert thresholds.
+  *Scope: a library and a threshold — no job computes it on a schedule yet.*
 - **Regulated-AI docs generated from the code.** Model card, dataset card, and an
   **EU-AI-Act Annex IV** technical document are rendered from the actual features,
   thresholds, and guardrail coverage — CI fails if they drift. See
   [docs/governance/](docs/governance/README.md).
 - **IaC only.** Three isolated Terraform layers with per-layer remote state + Databricks
   Asset Bundles. No console deployments.
-- **199 local tests**, green in CI on every PR.
+- **Every gate is attacked in CI.** `make gate-attack` breaks each control on purpose
+  — detaching the guardrail, restoring the off-by-one, softening a verdict, pre-filtering
+  the DQ rows — and fails unless the real gate refuses it *for the right reason*. Each
+  attack is a bug this repository actually shipped.
 
 ## Testing philosophy (honest)
 
 Pure logic is **unit-tested locally with the real engines** — local **PySpark** for the
 DLT transforms and dashboard SQL, real **XGBoost + MLflow** for training/serving, real
 **LangGraph** for self-healing, real mocked-client bridges for the Bedrock Lambda and
-Vector Search. The **Responsible-AI gates are tested too**: the guardrail red-team
-(adversarial probes must be blocked, benign ones must not), the verdict acceptance gate
-(each adversarial verdict rejected on the right check), the drift detector, and the
-generated AI-Act docs (`--check` must match the code). Infrastructure is
-**offline-validated** (`terraform validate` per layer, `databricks bundle validate`
-schema) with no cloud calls. **Cloud execution is deferred** to a dedicated deploy phase —
-see [`docs/DEPLOY.md`](docs/DEPLOY.md). A reviewer can clone this repo and run the entire
-suite on a laptop.
+Vector Search. Infrastructure is **offline-validated** (`terraform validate` per layer,
+`databricks bundle validate` schema, `checkov`) with no cloud calls. **Cloud execution is
+deferred** to a dedicated deploy phase — see [`docs/DEPLOY.md`](docs/DEPLOY.md). A reviewer
+can clone this repo and run the entire suite on a laptop.
+
+**And the tests are themselves tested.** This suite was green — every gate, every badge —
+while the Bedrock guardrail was never attached to the agent, `merchant_risk_score` was the
+constant 0.0 on every transaction ever scored, and the DLT data-quality metric reported
+100% because the rows that could fail it had already been filtered out. The tests covering
+all three passed, because each asserted the shape of a description rather than the
+behaviour of a control: a `re.search` for `"PROMPT_ATTACK"` in a file, a comparison of
+dataclass field types that cannot diverge, an expectation evaluated on a pre-filtered frame.
+
+So `make gate-proof` breaks each control on purpose and demands the real gate refuse it.
+Three rules keep that a proof rather than a ritual: every gate must be **green first** (a
+red gate would "block" everything and prove nothing); a **non-zero exit is not evidence**
+(an import error exits non-zero too — the *named* test must report the failure); and a
+mutation whose target has moved is reported **STALE**, not passed. It has already caught
+four of its own new gates leaking, one tautology written while removing tautologies, and a
+PII detector with a random false-positive rate. `make gate-attack` narrates it.
 
 ## Business impact
 
@@ -156,7 +194,10 @@ pip install -e ".[dev]"
 make test            # pytest — full suite (local Spark + XGBoost + MLflow + LangGraph)
 make lint            # ruff check
 make fmt             # ruff format
+make gate-proof      # break every control on purpose; each must be refused, for the right reason
+make gate-attack     # the same, narrated — watch a control say no
 make guardrail-scan  # run the guardrail red-team coverage gate
+make iac-scan        # checkov over the Terraform layers (skips documented in .checkov.yml)
 make govern-docs     # regenerate the model/dataset cards + AI-Act technical docs
 ```
 

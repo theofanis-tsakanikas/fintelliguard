@@ -37,7 +37,7 @@ fintelliguard/
 │   └── langgraph/    # Self-healing Supervisor + Medic
 ├── simulator/        # Python transaction generator (~500 txns/sec)
 ├── dashboards/       # Grafana dashboard JSON exports
-├── tests/            # Unit + integration tests per layer (199, incl. the Responsible-AI gates)
+├── tests/            # Unit + integration tests per layer (incl. the Responsible-AI gates)
 └── docs/
     ├── governance/   # Generated regulated-AI docs (model/dataset cards, guardrail coverage, AI-Act)
     └── ...           # Architecture decisions, narrative, diagrams

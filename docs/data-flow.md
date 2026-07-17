@@ -16,9 +16,14 @@ Python simulator (~500 txns/sec)
   → Mosaic AI Feature Store (online)   <5ms lookup by card_hash
 ```
 
-State features (z-score, card_age, device_seen, country_mismatch, unusual_hour) use
-Spark `flatMapGroupsWithState` + checkpointing. Window features (velocities, distinct
-counts) use sliding windows with watermarking for late events.
+State features (z-score, card_age, device_seen, country_mismatch, unusual_hour) and window
+features (velocities, distinct counts) are computed per card, from strictly-prior events
+only.
+
+> **Scope.** The streaming execution — `flatMapGroupsWithState`, watermarks, checkpointed
+> state — is **designed, not built**; see `docs/features.md`. Gold is a full-table
+> recompute today. The Feature Store online store (`<5ms lookup`) above is likewise a
+> spec: `ml/features/feature_store.py` describes the table, and nothing writes or reads it.
 
 ## Batch path (model training)
 
