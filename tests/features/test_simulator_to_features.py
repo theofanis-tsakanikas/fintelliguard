@@ -6,26 +6,44 @@ Proves the injected patterns are learnable in the canonical feature space.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 
 from ml.features import validate_feature_vector
 from ml.features.adapter_stream import compute_features
+from ml.features.merchant_risk import build_merchant_risk_table
+from ml.features.semantics import check_invariants
 from simulator import SimulatorConfig, TransactionGenerator
 
 
 def _materialize():
     gen = TransactionGenerator(SimulatorConfig(seed=11, fraud_injection_rate=0.15, n_cards=300))
     txns = gen.generate(3000)
+
+    # The merchant risk table is fitted on the first third and the rest is scored against
+    # it — a target encoding fitted on the rows it encodes leaks the label.
+    split = len(txns) // 3
+    table = build_merchant_risk_table(
+        [{"merchant_id": t.merchant_id, "is_fraud": bool(t.is_fraud_truth)} for t in txns[:split]]
+    )
+
     history: dict[str, list[dict]] = defaultdict(list)
+    first_seen: dict[str, str] = {}
     rows = []  # (pattern, feature_vector, prior_count)
     for txn in txns:
         current = txn.to_contract_dict()
-        prior_count = sum(
-            1 for h in history[txn.card_hash] if h["timestamp"] < current["timestamp"]
+        card = txn.card_hash
+        prior_count = sum(1 for h in history[card] if h["timestamp"] < current["timestamp"])
+        first_seen.setdefault(card, current["timestamp"])
+        record = compute_features(
+            current,
+            history[card],
+            merchant_risk_table=table,
+            card_first_seen=datetime.fromisoformat(first_seen[card]),
         )
-        record = compute_features(current, history[txn.card_hash])
         validate_feature_vector(record.features)  # every emitted vector stays in contract
+        assert not check_invariants(record.features)  # ...and stays semantically coherent
         rows.append((txn.fraud_pattern, record.features, prior_count))
-        history[txn.card_hash].append(current)
+        history[card].append(current)
     return rows
 
 
@@ -55,10 +73,30 @@ def test_amount_outlier_produces_high_zscore():
     assert max(zscores) > 3.0
 
 
-def test_unusual_hour_flag_set():
-    flags = [fv.is_unusual_hour for fv, _ in _where("unusual_hour")]
-    assert flags
-    assert all(flags)
+def test_unusual_hour_is_a_strong_signal_but_history_can_normalise_it():
+    """Night fraud is flagged — except on cards that already transact at night.
+
+    This asserted `all(flags)`, which was only true because `is_unusual_hour` used a
+    linear [min, max] band over a circular quantity. The correct circular version does not
+    flag a 03:00 transaction on a card whose own history contains 02:00 activity — and
+    repeated night fraud on one card puts exactly that in its history. That is the feature
+    working: "unusual" is relative to the card, so a card habituated to the small hours has
+    no unusual hour there, and no amount of labelling makes it one.
+
+    So the honest assertion is signal, not absolutes: strongly enriched on the archetype,
+    and rare on legitimate traffic.
+    """
+    fraud_flags = [fv.is_unusual_hour for fv, _ in _where("unusual_hour")]
+    legit_flags = [fv.is_unusual_hour for fv, _ in _where(None)]
+    assert fraud_flags and legit_flags
+
+    fraud_rate = sum(fraud_flags) / len(fraud_flags)
+    legit_rate = sum(legit_flags) / len(legit_flags)
+    assert fraud_rate > 0.8, f"the archetype is barely detectable: {fraud_rate:.2f}"
+    assert fraud_rate > legit_rate * 5, (
+        f"unusual-hour fraud ({fraud_rate:.2f}) is not meaningfully separated from "
+        f"legitimate traffic ({legit_rate:.2f})"
+    )
 
 
 def test_new_device_not_seen_before():

@@ -17,6 +17,8 @@ import argparse
 import json
 import logging
 from collections import deque
+from collections.abc import Mapping
+from datetime import datetime
 from time import perf_counter
 
 from agents.bedrock.eval.judge import VerdictContext, evaluate_verdict
@@ -42,14 +44,25 @@ STUB_REFERENCES = (
 
 
 class CardHistoryStore:
-    """Per-card bounded history for the streaming feature adapter."""
+    """Per-card bounded history for the streaming feature adapter.
+
+    The ring buffer bounds how many events a card keeps; it does NOT bound how many cards
+    exist, so `first_seen` is tracked separately as a single timestamp per card. That is
+    also the fix for `card_age_days`: derived from the buffer, a card's "oldest" event is
+    recent by construction once the buffer wraps, so an old busy card could never look old.
+    """
 
     def __init__(self, cap: int = _HISTORY_CAP) -> None:
         self._cap = cap
         self._by_card: dict[str, deque] = {}
+        self._first_seen: dict[str, datetime] = {}
 
     def get(self, card: str) -> list[dict]:
         return list(self._by_card.get(card, ()))
+
+    def first_seen(self, card: str) -> datetime | None:
+        """The card's earliest observed transaction — survives the ring buffer wrapping."""
+        return self._first_seen.get(card)
 
     def append(self, card: str, contract: dict) -> None:
         buf = self._by_card.get(card)
@@ -57,6 +70,16 @@ class CardHistoryStore:
             buf = deque(maxlen=self._cap)
             self._by_card[card] = buf
         buf.append(contract)
+        self._record_first_seen(card, contract)
+
+    def _record_first_seen(self, card: str, contract: dict) -> None:
+        try:
+            when = datetime.fromisoformat(str(contract.get("timestamp")))
+        except (TypeError, ValueError):
+            return
+        current = self._first_seen.get(card)
+        if current is None or when < current:
+            self._first_seen[card] = when
 
 
 def build_stub_verdict(
@@ -91,11 +114,22 @@ def process_transaction(
     scorer: FraudScorer,
     guardrail: GuardrailPolicy,
     metrics: ServingMetrics,
+    merchant_risk_table: Mapping[str, float],
 ) -> dict:
-    """Run one transaction through the whole funnel; update metrics; return a summary."""
+    """Run one transaction through the whole funnel; update metrics; return a summary.
+
+    `merchant_risk_table` must be the table the scorer was TRAINED with — see
+    `ml/features/merchant_risk.py`. It was not passed at all, so `merchant_risk_score` was
+    0.0 on every transaction this service has scored.
+    """
     card = str(contract.get("card_hash", ""))
     try:
-        record = compute_features(contract, history.get(card))
+        record = compute_features(
+            contract,
+            history.get(card),
+            merchant_risk_table=merchant_risk_table,
+            card_first_seen=history.first_seen(card),
+        )
     except FeatureComputationError:
         metrics.record_quarantine()
         return {"status": "quarantined", "transaction_id": contract.get("transaction_id")}
@@ -139,7 +173,13 @@ def run(
     module (and its unit tests) stay importable without the native Kafka client."""
     from confluent_kafka import Consumer
 
-    scorer = scorer or train_demo_scorer()
+    # The scorer and its merchant risk table are one artefact: serving a model against a
+    # table it was not trained with is train/serve skew.
+    demo = train_demo_scorer()
+    scorer = scorer or demo.scorer
+    merchant_risk_table = demo.merchant_risk_table
+    logger.info("demo model held-out AUC: %.3f", demo.holdout_auc)
+
     metrics = ServingMetrics(environment=environment, model_version=scorer.config.model_version)
     guardrail = GuardrailPolicy()
     history = CardHistoryStore()
@@ -171,7 +211,9 @@ def run(
             except (ValueError, AttributeError):
                 metrics.record_quarantine()
                 continue
-            result = process_transaction(contract, history, scorer, guardrail, metrics)
+            result = process_transaction(
+                contract, history, scorer, guardrail, metrics, merchant_risk_table
+            )
             processed += 1
             if result["status"] == "scored" and result["decision"] != DECISION_ALLOW:
                 logger.info(

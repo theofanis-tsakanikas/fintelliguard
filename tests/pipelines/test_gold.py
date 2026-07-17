@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import statistics
-from collections import Counter
+from datetime import datetime
 
 import pytest
 
-from ml.features.adapter_ieee import CardContext, map_row
 from ml.features.adapter_stream import compute_features
+from ml.features.merchant_risk import build_merchant_risk_table
 from ml.features.schema import FEATURE_NAMES, LOOKUP_KEY, PRIMARY_KEY
 from pipelines.common import feature_record_schema, select_quarantined, select_valid
 from pipelines.gold.gold_transforms import (
@@ -41,8 +40,23 @@ _KEYS = (
 )
 
 
+_RISK_TABLE = build_merchant_risk_table(
+    [{"merchant_id": "M1", "is_fraud": i % 10 == 0} for i in range(200)]
+    + [{"merchant_id": "M2", "is_fraud": i % 3 == 0} for i in range(200)]
+    + [{"merchant_id": "M3", "is_fraud": False} for _ in range(200)]
+)
+
+
 def _expected_realtime():
-    """Pure-python expected features, replaying each card's history in order."""
+    """Pure-python expected features, replaying each card's history in order.
+
+    This mirrors the implementation, so it can only catch plumbing errors in the
+    `applyInPandas` wiring — never a bug inside the adapter. That is a fair thing for THIS
+    test to do, because the adapter's semantics are proven elsewhere by independent paths
+    (`tests/features/test_parity_distributional.py`). Naming the boundary matters: the
+    training-side version of this mirror was silently the only parity check that existed,
+    and it encoded a leakage bug as the expected answer.
+    """
     by_card: dict[str, list[dict]] = {}
     for row in _STREAM_ROWS:
         rec = dict(zip(_KEYS, row, strict=True))
@@ -51,16 +65,25 @@ def _expected_realtime():
     expected = {}
     for rows in by_card.values():
         rows.sort(key=lambda r: (r["timestamp"], r["transaction_id"]))
+        first_seen = datetime.fromisoformat(rows[0]["timestamp"])
         history: list[dict] = []
         for rec in rows:
-            expected[rec["transaction_id"]] = compute_features(rec, history).features.as_dict()
+            expected[rec["transaction_id"]] = compute_features(
+                rec,
+                history,
+                merchant_risk_table=_RISK_TABLE,
+                card_first_seen=first_seen,
+            ).features.as_dict()
             history.append(rec)
     return expected
 
 
 def test_gold_realtime_schema_and_parity(spark):
     silver = spark.createDataFrame(_STREAM_ROWS, _STREAM_SCHEMA)
-    gold = {r["transaction_id"]: r.asDict() for r in build_realtime_features(silver).collect()}
+    gold = {
+        r["transaction_id"]: r.asDict()
+        for r in build_realtime_features(silver, merchant_risk_table=_RISK_TABLE).collect()
+    }
 
     # Exactly the canonical schema: keys + the 15 features.
     sample = next(iter(gold.values()))
@@ -143,27 +166,51 @@ _IEEE_KEYS = (
 )
 
 
-def test_gold_training_schema_label_and_parity(spark):
+def test_gold_training_schema_and_label(spark):
     silver = spark.createDataFrame(_IEEE_ROWS, _IEEE_SCHEMA)
     gold = {int(r[PRIMARY_KEY]): r.asDict() for r in build_training_features(silver).collect()}
 
     sample = next(iter(gold.values()))
     assert tuple(sample.keys()) == (PRIMARY_KEY, LOOKUP_KEY, *FEATURE_NAMES, "is_fraud")
 
-    # Replicate the per-card1 context the gold group computes, then map via adapter_ieee.
-    amounts = [r[2] for r in _IEEE_ROWS]
-    ctx = CardContext(
-        amount_mean=statistics.mean(amounts),
-        amount_std=statistics.stdev(amounts),
-        modal_addr2=Counter(r[8] for r in _IEEE_ROWS).most_common(1)[0][0],
-    )
     for row in _IEEE_ROWS:
         rec = dict(zip(_IEEE_KEYS, row, strict=True))
-        expected = map_row(rec, ctx).features.as_dict()
-        produced = gold[rec["TransactionID"]]
-        assert produced["is_fraud"] == rec["isFraud"]
+        assert gold[rec["TransactionID"]]["is_fraud"] == rec["isFraud"]
+
+
+def test_gold_training_features_do_not_see_the_future(spark):
+    """A transaction's training features must not change when LATER ones are added.
+
+    This replaces a test that computed its expectation like this:
+
+        amounts = [r[2] for r in _IEEE_ROWS]          # every row of the card...
+        ctx = CardContext(amount_mean=statistics.mean(amounts), ...)   # ...including the future
+        expected = map_row(rec, ctx)
+
+    which is exactly what the implementation did, so the two agreed and the test passed —
+    while `amount_zscore` and `country_mismatch` were computed at training against
+    statistics containing the row being scored and everything after it. The test mirrored
+    the leakage instead of catching it. There is no way to write that mirror and have it
+    fail.
+
+    Feeding the same prefix twice — once alone, once followed by more transactions — asks
+    the only question that matters: does the past depend on the future?
+    """
+    prefix = _IEEE_ROWS[:2]
+    prefix_only = spark.createDataFrame(prefix, _IEEE_SCHEMA)
+    with_future = spark.createDataFrame(_IEEE_ROWS, _IEEE_SCHEMA)
+
+    before = {
+        int(r[PRIMARY_KEY]): r.asDict() for r in build_training_features(prefix_only).collect()
+    }
+    after = {
+        int(r[PRIMARY_KEY]): r.asDict() for r in build_training_features(with_future).collect()
+    }
+
+    for row in prefix:
+        txn_id = row[0]
         for name in FEATURE_NAMES:
-            if isinstance(expected[name], float):
-                assert produced[name] == pytest.approx(expected[name]), name
-            else:
-                assert produced[name] == expected[name], name
+            assert before[txn_id][name] == pytest.approx(after[txn_id][name]), (
+                f"{name} on transaction {txn_id} changed when a LATER transaction was "
+                "added to the card — the training features are computed from the future"
+            )

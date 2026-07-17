@@ -14,14 +14,17 @@ quarantine (via pipelines.common), never dropping silently.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
+from datetime import datetime
 
 import pandas as pd
 from pyspark.sql import DataFrame
 from pyspark.sql import types as T
 
 from ml.features.adapter_ieee import CardContext, map_row
-from ml.features.adapter_stream import compute_features
+from ml.features.adapter_stream import FeatureComputationError, compute_features
 from ml.features.schema import FEATURE_NAMES, LOOKUP_KEY, PRIMARY_KEY
+from ml.features.transforms import modal_value
 from pipelines.common import (
     add_quarantine_reason,
     feature_record_schema,
@@ -65,15 +68,35 @@ GOLD_GATES: dict[str, str] = {
 }
 
 
-def _realtime_group(pdf: pd.DataFrame) -> pd.DataFrame:
+def _realtime_group(pdf: pd.DataFrame, merchant_risk_table: Mapping[str, float]) -> pd.DataFrame:
     """Per-card: replay events in time order through `compute_features` (no leakage)."""
     pdf = pdf.sort_values(["timestamp", "transaction_id"])
     history: list[dict] = []
     out: list[dict] = []
+    quarantined: list[dict] = []
+
+    # In a full-group recompute the card's earliest event IS its first-seen. Passing it
+    # explicitly stops card_age_days being measured against whatever slice of history the
+    # caller happens to hold.
+    first_seen = _earliest_timestamp(pdf)
+
     for record in pdf.to_dict("records"):
         current = {key: record[key] for key in _CONTRACT_KEYS}
         current["amount"] = float(current["amount"])
-        result = compute_features(current, history)
+        try:
+            result = compute_features(
+                current,
+                history,
+                merchant_risk_table=merchant_risk_table,
+                card_first_seen=first_seen,
+            )
+        except FeatureComputationError:
+            # Quarantine THIS row; keep the card group alive. `adapter_stream`'s docstring
+            # has always promised the Gold batch does this — it had no try/except at all,
+            # so one malformed timestamp anywhere in a card's history killed the Spark task,
+            # took four stage retries with it, and failed the whole DLT update.
+            quarantined.append(current)
+            continue
         out.append(
             {
                 PRIMARY_KEY: result.transaction_id,
@@ -85,26 +108,63 @@ def _realtime_group(pdf: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(out, columns=[PRIMARY_KEY, LOOKUP_KEY, *FEATURE_NAMES])
 
 
-def build_realtime_features(silver_clean: DataFrame) -> DataFrame:
-    """gold.txn_features_realtime — the 15 features from clean stream transactions."""
-    return silver_clean.groupBy(LOOKUP_KEY).applyInPandas(_realtime_group, schema=_REALTIME_SCHEMA)
+def _earliest_timestamp(pdf: pd.DataFrame) -> datetime | None:
+    """The card's first event time, or None when nothing in the group parses."""
+    parsed = pd.to_datetime(pdf["timestamp"], errors="coerce", format="mixed")
+    parsed = parsed.dropna()
+    return parsed.min().to_pydatetime() if not parsed.empty else None
+
+
+def build_realtime_features(
+    silver_clean: DataFrame, *, merchant_risk_table: Mapping[str, float]
+) -> DataFrame:
+    """gold.txn_features_realtime — the 15 features from clean stream transactions.
+
+    `merchant_risk_table` is required and broadcast into every executor. It used to be
+    omitted entirely, so `merchant_risk_score` was 0.0 for every row this table has ever
+    produced (see `ml/features/merchant_risk.py`).
+    """
+    table = dict(merchant_risk_table)
+
+    def _group(pdf: pd.DataFrame) -> pd.DataFrame:
+        return _realtime_group(pdf, table)
+
+    return silver_clean.groupBy(LOOKUP_KEY).applyInPandas(_group, schema=_REALTIME_SCHEMA)
 
 
 def _training_group(pdf: pd.DataFrame) -> pd.DataFrame:
-    """Per-card1: compute group aggregates, then map each row via adapter_ieee."""
-    amounts = pd.to_numeric(pdf["TransactionAmt"], errors="coerce")
-    mean = float(amounts.mean()) if amounts.notna().any() else 0.0
-    std = float(amounts.std(ddof=1)) if amounts.notna().sum() > 1 else 0.0
-    if math.isnan(mean):
-        mean = 0.0
-    if math.isnan(std):
-        std = 0.0
-    addr2_mode = pd.to_numeric(pdf["addr2"], errors="coerce").dropna().mode()
-    modal_addr2 = float(addr2_mode.iloc[0]) if not addr2_mode.empty else None
-    ctx = CardContext(amount_mean=mean, amount_std=std, modal_addr2=modal_addr2)
+    """Per-card1: walk the card in time order, mapping each row against its OWN PAST.
+
+    The aggregates used to be computed over the whole group:
+
+        amounts = pd.to_numeric(pdf["TransactionAmt"])   # every row of the card...
+        mean = float(amounts.mean())                     # ...including the future
+
+    so `amount_zscore` and `country_mismatch` at training were measured against statistics
+    that contained the transaction being scored and every transaction after it. The stream
+    adapter computes the same two features from strictly-prior events only. The features
+    shared a name and were computed under opposite information sets — and
+    `docs/features.md` promised "all window/state features are computed only from data
+    *before* the current transaction", which was true of the serving path and false of the
+    path that built the labels.
+
+    An expanding window costs a sort and a running total, and makes the promise true.
+    """
+    pdf = pdf.sort_values(["TransactionDT", "TransactionID"])
+
+    seen_amounts: list[float] = []
+    seen_addr2: list[object] = []
+    seen_hours: list[int] = []
 
     out: list[dict] = []
     for record in pdf.to_dict("records"):
+        # Context from PRIOR rows only — this row is not yet in the lists.
+        ctx = CardContext(
+            amount_mean=_mean(seen_amounts),
+            amount_std=_stddev(seen_amounts),
+            modal_addr2=modal_value(seen_addr2) if seen_addr2 else None,
+            active_hours=tuple(seen_hours) or None,
+        )
         result = map_row(record, ctx)
         row = {
             PRIMARY_KEY: result.transaction_id,
@@ -113,7 +173,46 @@ def _training_group(pdf: pd.DataFrame) -> pd.DataFrame:
         }
         row["is_fraud"] = int(record["isFraud"])
         out.append(row)
+
+        amount = _finite(record.get("TransactionAmt"))
+        if amount is not None:
+            seen_amounts.append(amount)
+        addr2 = _finite(record.get("addr2"))
+        if addr2 is not None:
+            seen_addr2.append(addr2)
+        seconds = _finite(record.get("TransactionDT"))
+        if seconds is not None:
+            seen_hours.append(int((seconds // 3600) % 24))
+
     return pd.DataFrame(out, columns=[PRIMARY_KEY, LOOKUP_KEY, *FEATURE_NAMES, "is_fraud"])
+
+
+def _finite(value: object) -> float | None:
+    """A usable number, or None. NaN is not usable — and NaN is not NULL.
+
+    `silver_transforms` guards these columns with `coalesce`, which replaces NULL only, so
+    a NaN cell reached `int(_num(...))` in the IEEE adapter and raised `ValueError: cannot
+    convert float NaN to integer`, killing the card group's Spark task. IEEE-CIS's C/D/dist
+    columns are famously sparse.
+    """
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(number) else number
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _stddev(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean = _mean(values)
+    return (sum((v - mean) ** 2 for v in values) / (len(values) - 1)) ** 0.5
 
 
 def build_training_features(silver_ieee_clean: DataFrame) -> DataFrame:

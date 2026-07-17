@@ -12,8 +12,7 @@ history is defensively filtered by timestamp, so a caller cannot leak the future
 
 from __future__ import annotations
 
-from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -69,14 +68,26 @@ def compute_features(
     current: Mapping[str, Any],
     card_history: Sequence[Mapping[str, Any]],
     *,
-    merchant_risk_table: Mapping[str, float] | None = None,
+    merchant_risk_table: Mapping[str, float],
+    card_first_seen: datetime | None = None,
 ) -> FeatureRecord:
     """Compute the canonical 15 features for `current` given the card's prior events.
 
     `current` and each history item are bronze contract dicts (transaction_id, timestamp,
     amount, merchant_id, card_hash, device_id, ip_country, mcc_code).
+
+    `merchant_risk_table` is REQUIRED — see `ml/features/merchant_risk.py`. It used to
+    default to `None -> {}`, no caller ever passed it, and `merchant_risk_score` was
+    therefore 0.0 on every transaction this system has ever scored while training saw
+    0.02-0.12. A neutral default on a feature input is not a convenience; it is a silent
+    way to ship a constant.
+
+    `card_first_seen` is the card's durable first-transaction time. Without it, card age is
+    measured against whatever history the caller happens to be holding — which for the
+    streaming scorer is a 512-entry ring buffer, so a busy card could never look old.
     """
-    merchant_risk_table = merchant_risk_table or {}
+    if merchant_risk_table is None:
+        raise TypeError("merchant_risk_table is required; pass an explicit table")
     # A bad/missing CURRENT timestamp raises FeatureComputationError -> caller quarantines.
     now = _parse(current.get("timestamp"))
     amount = float(current["amount"])
@@ -105,13 +116,21 @@ def compute_features(
     distinct_merchants = len({h["merchant_id"] for h in within_24h} | {current["merchant_id"]})
 
     # Identity & device.
-    first_seen = min((ts for _, ts in prior_ts), default=now)
-    card_age_days = (now - first_seen).days
+    #
+    # Prefer the durable first-seen the caller tracks; fall back to the history window only
+    # when it is absent. Deriving age purely from `prior_ts` made this feature structurally
+    # 0 at serving: the scorer's history is a bounded ring buffer, so the "oldest" event a
+    # busy card has is recent by construction, and the Gold batch starts each group empty.
+    observed_first_seen = min((ts for _, ts in prior_ts), default=now)
+    first_seen = (
+        min(card_first_seen, observed_first_seen) if card_first_seen else observed_first_seen
+    )
+    card_age_days = max((now - first_seen).days, 0)
     device_seen_before = any(h["device_id"] == current["device_id"] for h in prior)
     device_txn_count_24h = sum(1 for h in within_24h if h["device_id"] == current["device_id"]) + 1
 
     # Geography.
-    modal_country = _modal(h["ip_country"] for h in prior)
+    modal_country = transforms.modal_value(h["ip_country"] for h in prior)
     country_mismatch = transforms.values_differ(current["ip_country"], modal_country)
     distinct_countries = len({h["ip_country"] for h in within_24h} | {current["ip_country"]})
 
@@ -152,10 +171,3 @@ def _stddev(values: list[float], mean: float) -> float:
         return 0.0
     variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
     return variance**0.5
-
-
-def _modal(values: Iterable[str]) -> str | None:
-    counts = Counter(values)
-    if not counts:
-        return None
-    return counts.most_common(1)[0][0]

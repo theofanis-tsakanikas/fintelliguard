@@ -7,6 +7,8 @@ metric names the committed Grafana dashboards query — all offline, no Kafka, n
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 
@@ -23,8 +25,19 @@ from ml.serving.stream_service import (
 
 
 @pytest.fixture(scope="module")
-def scorer():
+def demo():
+    """The scorer AND the merchant risk table it was trained with — one artefact."""
     return train_demo_scorer(max_records=400, seed=7)
+
+
+@pytest.fixture(scope="module")
+def scorer(demo):
+    return demo.scorer
+
+
+@pytest.fixture(scope="module")
+def risk_table(demo):
+    return demo.merchant_risk_table
 
 
 def _txn(txn_id: str, **over: object) -> dict:
@@ -46,14 +59,38 @@ def _txn(txn_id: str, **over: object) -> dict:
 # Demo model bootstrap
 # --------------------------------------------------------------------------- #
 def test_generated_dataset_has_feature_parity_and_both_classes():
-    features, labels = generate_labeled_dataset(max_records=300, seed=7)
+    features, labels, _table = generate_labeled_dataset(max_records=300, seed=7)
     assert list(features.columns) == list(FEATURE_NAMES)  # the parity invariant
-    assert len(features) == 300
     assert labels.sum() > 0 and labels.sum() < len(labels)  # both classes present
 
 
+def test_generated_dataset_has_no_dead_features():
+    """Every feature the demo model trains on must vary.
+
+    `merchant_risk_score` was 0.0 and `card_age_days` was 0 on every row, so the model was
+    fitted on two constants and the funnel served two constants — consistent, and both
+    wrong. No test looked, because none ever asserted a stream feature's range.
+    """
+    features, _labels, _table = generate_labeled_dataset(max_records=600, seed=7)
+    dead = [name for name in FEATURE_NAMES if features[name].nunique() <= 1]
+    assert not dead, f"features that never vary across 600 transactions: {dead}"
+
+
+def test_demo_scorer_is_better_than_a_coin_flip(demo):
+    """A held-out AUC, on rows the model has never seen.
+
+    The fit used to be on 100% of the data with no split, and the only assertion was
+    `all(0.0 <= v <= 1.0 for v in metrics.values())` — true of a model that predicts 0.5
+    forever.
+    """
+    assert demo.holdout_auc > 0.6, (
+        f"held-out AUC {demo.holdout_auc:.3f} is close to chance — the demo model that "
+        "scores the local funnel has not learned the fraud signal"
+    )
+
+
 def test_demo_scorer_scores_in_contract(scorer):
-    features, _ = generate_labeled_dataset(max_records=50, seed=7)
+    features, _labels, _table = generate_labeled_dataset(max_records=50, seed=7)
     out = scorer.score(features.iloc[0].to_dict())
     assert set(out) == {
         "fraud_score",
@@ -69,19 +106,26 @@ def test_demo_scorer_scores_in_contract(scorer):
 # --------------------------------------------------------------------------- #
 # The funnel (process_transaction)
 # --------------------------------------------------------------------------- #
-def test_process_scores_a_normal_transaction(scorer):
+def test_process_scores_a_normal_transaction(scorer, risk_table):
     m = ServingMetrics(registry=CollectorRegistry())
-    result = process_transaction(_txn("t1"), CardHistoryStore(), scorer, GuardrailPolicy(), m)
+    result = process_transaction(
+        _txn("t1"), CardHistoryStore(), scorer, GuardrailPolicy(), m, risk_table
+    )
     assert result["status"] == "scored"
     assert 0.0 <= result["fraud_score"] <= 1.0
     assert result["decision"] in {"allow", "review", "block"}
 
 
-def test_process_quarantines_a_bad_timestamp(scorer):
+def test_process_quarantines_a_bad_timestamp(scorer, risk_table):
     registry = CollectorRegistry()
     m = ServingMetrics(registry=registry)
     result = process_transaction(
-        _txn("t2", timestamp="not-a-date"), CardHistoryStore(), scorer, GuardrailPolicy(), m
+        _txn("t2", timestamp="not-a-date"),
+        CardHistoryStore(),
+        scorer,
+        GuardrailPolicy(),
+        m,
+        risk_table,
     )
     assert result["status"] == "quarantined"
     value = registry.get_sample_value(
@@ -114,6 +158,20 @@ def test_history_is_bounded_and_ordered():
     kept = store.get("c")
     assert len(kept) == 3  # ring buffer capped
     assert [h["transaction_id"] for h in kept] == ["t2", "t3", "t4"]  # newest kept, in order
+
+
+def test_first_seen_survives_the_ring_buffer_wrapping():
+    """Card age must not be measured against a buffer that has forgotten the card's start.
+
+    `card_age_days` was derived from the history list the caller held. That list is capped
+    at 512 events, so a busy card's "oldest" transaction is recent by construction and the
+    feature collapsed toward 0 for exactly the cards with the most history.
+    """
+    store = CardHistoryStore(cap=2)
+    for i in range(5):
+        store.append("c", {"transaction_id": f"t{i}", "timestamp": f"2026-01-0{i + 1}T00:00:00"})
+    assert len(store.get("c")) == 2  # the buffer forgot the early events...
+    assert store.first_seen("c") == datetime(2026, 1, 1)  # ...but the card's age did not
 
 
 # --------------------------------------------------------------------------- #

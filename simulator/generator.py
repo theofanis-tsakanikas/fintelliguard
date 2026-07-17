@@ -24,11 +24,17 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from random import Random
 
+from ml.features.transforms import HOUR_TOLERANCE, circular_hour_distance
+
 from .config import SimulatorConfig
 from .schema import Transaction
 
 # Fixed virtual clock origin — keeps runs reproducible by seed alone.
 DEFAULT_START = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+
+# Days of card history the simulated stream spans. Cards need an age and the 30-day amount
+# window needs more than one day to be a window; a single-date stream gave neither.
+HISTORY_DAYS = 45
 
 # Geography pool (ISO 3166-1 alpha-2). Skewed toward a few "home" markets.
 COUNTRIES: tuple[str, ...] = ("DE", "US", "GB", "FR", "ES", "IT", "NL", "BR", "IN", "NG")
@@ -89,8 +95,10 @@ class TransactionGenerator:
         self.start_time = start_time or DEFAULT_START
         self._rng = Random(config.seed)
         self._new_device_counter = 0
-        # Per-compromised-card running clock, advanced by seconds to form tight clusters.
-        self._velocity_cursor: dict[str, datetime] = {}
+        # Every card has a private clock that only moves forward. Transactions for a card
+        # are therefore ordered and realistically spaced, which is what makes the 1h/24h
+        # window features mean anything.
+        self._card_clock: dict[str, datetime] = {}
 
         self._merchants: list[tuple[str, str]] = self._build_merchants()
         self._cards: list[_Card] = self._build_cards(config.n_cards, salt="card")
@@ -152,13 +160,56 @@ class TransactionGenerator:
             )
         return cards
 
-    def _sample_time(self, hours: tuple[int, ...]) -> datetime:
-        """A timestamp on the start date, with the hour drawn from `hours`."""
-        return self.start_time.replace(
-            hour=self._rng.choice(hours),
-            minute=self._rng.randint(0, 59),
-            second=self._rng.randint(0, 59),
-        )
+    def _card_start(self, card: _Card) -> datetime:
+        """When this card first appears. Cards enter the population at different times.
+
+        This is what gives `card_age_days` a range. Deterministic per card (derived from
+        the card hash) so a card's age does not depend on the order transactions happen to
+        be drawn in.
+        """
+        offset = int(card.card_hash[:8], 16) % HISTORY_DAYS
+        return self.start_time + timedelta(days=offset)
+
+    def _sample_time(self, card: _Card, hours: tuple[int, ...] | None = None) -> datetime:
+        """The card's NEXT transaction time, advancing its private clock forward.
+
+        Was `self.start_time.replace(hour=...)`: every transaction the simulator ever
+        produced landed on the single start date, drawn independently of every other. Three
+        silent consequences, all of which shaped the model the local funnel serves:
+
+        * `card_age_days` could never exceed 0 — a constant feature, everywhere.
+        * a card's whole life fitted in 24h, so the 30-day amount window and the
+          active-hour band never saw more than one day of behaviour.
+        * emission order was uncorrelated with event time, so ~50% of events arrived
+          out of order — invisible only because Gold recomputes the whole table.
+
+        A per-card clock with realistic gaps fixes all three: transactions for a card march
+        forward, some within the hour (velocity), some within the day, some days apart. The
+        1h/24h windows are populated because a card's events are actually near each other.
+        """
+        active = hours or card.active_hours
+        clock = self._card_clock.get(card.card_hash) or self._card_start(card)
+        when = self._snap_to_active(clock + self._inter_arrival(), active)
+        self._card_clock[card.card_hash] = when
+        return when
+
+    def _inter_arrival(self) -> timedelta:
+        """A gap to the card's next transaction, mixing bursts, same-day and quiet spells."""
+        bucket = self._rng.random()
+        if bucket < 0.30:  # same 1h window — velocity has something to count
+            return timedelta(minutes=self._rng.randint(2, 45))
+        if bucket < 0.70:  # same 24h window
+            return timedelta(hours=self._rng.randint(2, 10))
+        return timedelta(days=self._rng.randint(1, 4), hours=self._rng.randint(0, 6))
+
+    @staticmethod
+    def _snap_to_active(when: datetime, active: tuple[int, ...]) -> datetime:
+        """Move FORWARD to the card's next active hour. Never backwards — the clock is a clock."""
+        for _ in range(24):
+            if when.hour in active:
+                return when
+            when += timedelta(hours=1)
+        return when
 
     def _legit_amount(self, card: _Card) -> float:
         return round(card.base_amount * (2.71828 ** self._rng.gauss(0.0, 0.4)), 2)
@@ -196,7 +247,7 @@ class TransactionGenerator:
             device_id=self._rng.choice(card.devices),
             ip_country=card.home_country,
             amount=self._legit_amount(card),
-            when=self._sample_time(card.active_hours),
+            when=self._sample_time(card),
             is_fraud=False,
             pattern=None,
         )
@@ -215,10 +266,11 @@ class TransactionGenerator:
 
     def _fraud_velocity_spike(self) -> Transaction:
         card = self._rng.choice(self._compromised)
-        # Advance this card's private clock by only seconds → a tight per-card cluster.
-        cursor = self._velocity_cursor.get(card.card_hash)
-        when = cursor or self._sample_time(card.active_hours)
-        self._velocity_cursor[card.card_hash] = when + timedelta(seconds=self._rng.randint(1, 15))
+        # A burst: advance the card's clock by SECONDS rather than the usual gap, so these
+        # land inside one 1h window and txn_velocity_1h actually spikes.
+        clock = self._card_clock.get(card.card_hash) or self._card_start(card)
+        when = clock + timedelta(seconds=self._rng.randint(1, 15))
+        self._card_clock[card.card_hash] = when
         return self._new_transaction(
             card=card,
             device_id=self._rng.choice(card.devices),
@@ -237,7 +289,7 @@ class TransactionGenerator:
             device_id=self._rng.choice(card.devices),
             ip_country=foreign,
             amount=self._legit_amount(card),
-            when=self._sample_time(card.active_hours),
+            when=self._sample_time(card),
             is_fraud=True,
             pattern=FraudPattern.COUNTRY_MISMATCH,
         )
@@ -250,7 +302,7 @@ class TransactionGenerator:
             device_id=self._rng.choice(card.devices),
             ip_country=card.home_country,
             amount=amount,
-            when=self._sample_time(card.active_hours),
+            when=self._sample_time(card),
             is_fraud=True,
             pattern=FraudPattern.AMOUNT_OUTLIER,
         )
@@ -262,10 +314,30 @@ class TransactionGenerator:
             device_id=self._rng.choice(card.devices),
             ip_country=card.home_country,
             amount=self._legit_amount(card),
-            when=self._sample_time(UNUSUAL_HOURS),
+            when=self._sample_time(card, self._unusual_hours_for(card)),
             is_fraud=True,
             pattern=FraudPattern.UNUSUAL_HOUR,
         )
+
+    @staticmethod
+    def _unusual_hours_for(card: _Card) -> tuple[int, ...]:
+        """Night hours that are genuinely FAR from this card's active band.
+
+        `UNUSUAL_HOURS` is 00:00-05:00 for every card, but cards are active from 06:00-10:00
+        onward — so 05:00 on a card that starts at 06:00 is an hour's difference, and
+        labelling it fraud teaches the model that ordinary early activity is suspicious.
+        The feature (correctly) does not flag it, which is how this surfaced.
+
+        Injecting only hours the card's own pattern makes unusual keeps the archetype a
+        real signal rather than a label the features cannot support.
+        """
+        far = tuple(
+            hour
+            for hour in UNUSUAL_HOURS
+            if min(circular_hour_distance(hour, active) for active in card.active_hours)
+            > HOUR_TOLERANCE
+        )
+        return far or UNUSUAL_HOURS
 
     def _fraud_new_device(self) -> Transaction:
         card = self._rng.choice(self._cards)
@@ -276,7 +348,7 @@ class TransactionGenerator:
             device_id=fresh_device,
             ip_country=card.home_country,
             amount=self._legit_amount(card),
-            when=self._sample_time(card.active_hours),
+            when=self._sample_time(card),
             is_fraud=True,
             pattern=FraudPattern.NEW_DEVICE,
         )
