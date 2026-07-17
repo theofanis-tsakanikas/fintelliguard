@@ -11,6 +11,8 @@ from agents.langgraph.state import (
     FAILURE_UNKNOWN,
 )
 
+from .conftest import FAILING_METRICS, _ModelVersion, _Run
+
 _CONFIG = HealingConfig()
 
 
@@ -95,3 +97,73 @@ def test_idempotent_one_shot_remediation(actions, mlflow_client):
     # No second rollback.
     assert mlflow_client.transitions == []
     assert "skip" in out["decisions"][-1]
+
+
+# --------------------------------------------------------------------------- #
+# Rollback safety — the most dangerous bug in the repository
+# --------------------------------------------------------------------------- #
+
+
+def test_rollback_never_promotes_a_staging_version(mlflow_client):
+    """An unvalidated model must never reach Production, least of all autonomously.
+
+    The bug:
+
+        candidates = [v for v in versions if v.current_stage != "Production"]
+        previous = max(candidates, key=lambda v: int(v.version))
+
+    `candidates` includes Staging. `max` takes the highest VERSION NUMBER, not the previous
+    Production one. So with v2 serving and v3 sitting in Staging having failed the
+    AUC >= 0.92 gate, a p99 blip promoted **v3** — archiving the good model on the way past.
+    An untested fraud model decides real payments, no human involved, in direct violation of
+    the promotion policy this project calls non-negotiable.
+
+    The old test passed only because its fixture held exactly v1(Archived)/v2(Production).
+    The fixture now contains the Staging version a real registry always has.
+    """
+    result = rollback_to_previous_model(mlflow_client, "m")
+
+    assert result["action"] == "rollback_model"
+    assert result["to_version"] == "1", (
+        f"rolled back to v{result['to_version']} — v3 is in STAGING and has never served "
+        "traffic; the only valid fallback is the version that was previously Production"
+    )
+    assert mlflow_client.transitions[0]["version"] == "1"
+
+
+def test_rollback_applies_the_same_promotion_gate_as_a_forward_promotion(mlflow_client):
+    """A rollback IS a promotion. The agent is not an exception to the policy."""
+    # The only archived candidate now fails its gate.
+    mlflow_client.runs["run-1"] = _Run(dict(FAILING_METRICS))
+
+    result = rollback_to_previous_model(mlflow_client, "m")
+
+    assert result["action"] == "rollback_refused"
+    assert "promotion gate" in result["reason"]
+    assert mlflow_client.transitions == [], "a model that fails the gate was promoted anyway"
+
+
+def test_rollback_fails_closed_when_metrics_cannot_be_read(mlflow_client):
+    """'We could not check' is not a reason to put a model in front of payments."""
+
+    def _boom(run_id):
+        raise RuntimeError("tracking server unreachable")
+
+    mlflow_client.get_run = _boom
+    result = rollback_to_previous_model(mlflow_client, "m")
+
+    assert result["action"] == "rollback_refused"
+    assert mlflow_client.transitions == []
+
+
+def test_rollback_is_unavailable_when_nothing_was_ever_promoted(mlflow_client):
+    """With no previously-Production version there is no fallback — and that is not an
+    invitation to promote whatever happens to be newest."""
+    mlflow_client.versions = [
+        _ModelVersion("1", "Production"),
+        _ModelVersion("2", "Staging"),
+    ]
+    result = rollback_to_previous_model(mlflow_client, "m")
+
+    assert result["action"] == "rollback_unavailable"
+    assert mlflow_client.transitions == []

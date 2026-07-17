@@ -251,6 +251,13 @@ def render_ai_act() -> str:
         "the model's `decision_hint` is accepted with a stated reason; anything less cautious "
         "is refused outright by the gate. Releasing a transaction the model flagged is a human "
         "decision, not a generated one.",
+        "- **Bounds on the self-healing agent** (`agents/langgraph/`). It may restore a "
+        "previously-promoted model version and only that: never a Staging candidate, and only "
+        f"if that version's own metrics still clear the promotion gate (AUC ≥ {AUC_THRESHOLD}, "
+        f"precision ≥ {FRAUD_PRECISION_THRESHOLD}) — a rollback is a promotion, and the agent "
+        "is not an exception to the policy. A latency symptom must persist across consecutive "
+        "samples before it can move a model, and each healing thread has a hard ceiling on "
+        "total actions, past which it pages a human instead of acting.",
         "",
         "## 7. Post-market monitoring",
         "",

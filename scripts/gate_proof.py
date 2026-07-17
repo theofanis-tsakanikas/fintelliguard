@@ -203,6 +203,67 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/agents/bedrock/guardrails/test_guardrail_attachment.py",
         must_fail="test_denied_topics_match_the_policy_model",
     ),
+    # --- the self-healing agent ---------------------------------------------- #
+    Attack(
+        name="medic-promotes-staging-to-production",
+        rationale=(
+            "The most dangerous bug that shipped: a p99 blip promoted the newest STAGING "
+            "version — which had failed its AUC gate — into the payment path, archiving "
+            "the good model on the way past. Autonomously, with no human involved."
+        ),
+        path="agents/langgraph/medic.py",
+        # Restores BOTH lines of the original. Reverting only the stage filter left the
+        # version-number filter standing, which still excluded the newer Staging version —
+        # so the attack proved nothing and gate_proof reported LEAKED. The defence is two
+        # layers deep; a faithful attack has to remove the layer that shipped.
+        old=(
+            '    archived = [v for v in versions if v.current_stage == "Archived"]\n'
+            "    if current is not None:\n"
+            "        archived = [v for v in archived if int(v.version) < int(current.version)]"
+        ),
+        new='    archived = [v for v in versions if v.current_stage != "Production"]',
+        gate="tests/agents/langgraph/test_medic.py",
+        must_fail="test_rollback_never_promotes_a_staging_version",
+    ),
+    Attack(
+        name="medic-rollback-skips-the-promotion-gate",
+        rationale=(
+            "A rollback is a promotion. Without the gate the agent becomes an exception to "
+            "the AUC >= 0.92 policy the project calls non-negotiable."
+        ),
+        path="agents/langgraph/medic.py",
+        old=(
+            "    decision = _promotion_decision(mlflow_client, previous)\n"
+            "    if not decision.promote:"
+        ),
+        new=("    decision = _promotion_decision(mlflow_client, previous)\n    if False:"),
+        gate="tests/agents/langgraph/test_medic.py",
+        must_fail="test_rollback_applies_the_same_promotion_gate_as_a_forward_promotion",
+    ),
+    Attack(
+        name="p99-fires-on-a-single-sample",
+        rationale=(
+            "What shipped: one latency reading triggered a MODEL ROLLBACK. Latency and "
+            "model correctness are unrelated — a cold start would archive a good model."
+        ),
+        path="agents/langgraph/supervisor.py",
+        old="    return consecutive >= config.p99_confirmations_required, consecutive",
+        new="    return True, consecutive",
+        gate="tests/agents/langgraph/test_supervisor.py",
+        must_fail="test_a_single_p99_spike_is_not_an_incident",
+    ),
+    Attack(
+        name="medic-has-no-blast-radius-cap",
+        rationale=(
+            "The per-fingerprint retry counter bounds ONE incident; without a total cap, N "
+            "failing pipelines each get their own budget and nothing bounds the agent."
+        ),
+        path="agents/langgraph/medic.py",
+        old="    if spent < config.max_total_actions:\n        return None",
+        new="    return None",
+        gate="tests/agents/langgraph/test_graph.py",
+        must_fail="test_the_agent_stops_acting_once_its_budget_is_spent",
+    ),
     # --- the verdict gate ---------------------------------------------------- #
     Attack(
         name="grounding-by-substring",

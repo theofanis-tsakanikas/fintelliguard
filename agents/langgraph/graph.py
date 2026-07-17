@@ -31,6 +31,47 @@ def configure_tracing(config: HealingConfig) -> None:
         os.environ.pop("LANGCHAIN_TRACING_V2", None)
 
 
+def build_checkpointer(config: HealingConfig):
+    """Durable state for the healing thread. ON by default — it is load-bearing.
+
+    Without it `retry_counts` resets on every cycle, so `attempts` is always 0, always
+    `< max_pipeline_retries`, and `restart_pipeline` fires forever: the escalation branch
+    is unreachable in production and a broken pipeline is restarted indefinitely with
+    nobody paged. The tests only avoided this by threading state by hand
+    (`run_self_healing(graph, first)`) — production had no mechanism to do that, so the
+    test was quietly documenting the bug rather than covering it.
+
+    It is also the precondition for the p99 confirmation window: `classify` is stateless,
+    so debouncing needs `signal_history` to survive between cycles. The durability gap and
+    the debounce gap were the same gap.
+
+    Fails loud rather than falling back to an in-memory saver: a silent non-durable
+    fallback would restore exactly the bug this exists to fix, while looking fixed.
+    """
+    if not config.enable_checkpointing:
+        return None
+    try:
+        from langgraph.checkpoint.memory import InMemorySaver
+    except ImportError as exc:  # pragma: no cover - langgraph is a hard dependency
+        raise RuntimeError(
+            "checkpointing is enabled but no saver is available; refusing to run "
+            "non-durable, because retry counts that reset make escalation unreachable"
+        ) from exc
+    # In-process for the local funnel. A deployed daemon points this at Postgres — the
+    # store is a deployment decision, the durability is not.
+    return InMemorySaver()
+
+
+def healing_thread_config(config: HealingConfig) -> dict[str, Any]:
+    """The thread this healing loop resumes. STABLE — that is the whole point.
+
+    A checkpointer with a per-run unique thread_id is decorative: each cycle would start a
+    fresh thread and the state would reset exactly as it did before. A crash-and-restart
+    must reload the same thread.
+    """
+    return {"configurable": {"thread_id": config.healing_thread_id}}
+
+
 def build_self_healing_graph(monitors: Any, actions: RemediationActions, config: HealingConfig):
     """Compile the Supervisor + Medic graph with injected monitors/actions."""
     configure_tracing(config)
@@ -55,9 +96,34 @@ def build_self_healing_graph(monitors: Any, actions: RemediationActions, config:
         "supervisor", route_after_supervisor, {ROUTE_MEDIC: "medic", ROUTE_END: END}
     )
     graph.add_edge("medic", END)
-    return graph.compile()
+    compiled = graph.compile(checkpointer=build_checkpointer(config))
+    # The thread the caller must resume. Attached to the graph so a caller cannot hold a
+    # checkpointed graph and forget to pass the thread — which would silently restore the
+    # reset-every-cycle behaviour.
+    compiled.healing_config = healing_thread_config(config) if config.enable_checkpointing else {}
+    return compiled
 
 
 def run_self_healing(graph, state: HealthState | None = None) -> HealthState:
-    """Run one healing cycle, returning the final state."""
-    return graph.invoke(state or initial_state())
+    """Run ONE healing cycle on the durable thread, returning the final state.
+
+    A scheduler calls this every few minutes with no arguments. That used to mean
+    `initial_state()` every time: `retry_counts` reset, `attempts` was always 0, and a
+    broken pipeline was restarted forever while the escalation branch never ran.
+
+    With a checkpointer and a stable thread id, LangGraph reloads the previous cycle's
+    state, so retry counts accumulate, escalation is reachable, and `signal_history` is
+    there for the confirmation window. Passing `state` explicitly still works and is what
+    the tests do when they want to control the starting point.
+    """
+    thread = getattr(graph, "healing_config", {})
+    if state is not None:
+        return graph.invoke(state, thread)
+    if not thread:
+        return graph.invoke(initial_state(), thread)
+
+    # Seed the defaults ONCE, on the thread's first cycle. Passing `initial_state()` on
+    # every cycle would hand LangGraph `retry_counts={}` as an update and reset the counter
+    # each time — the original bug, reintroduced through the mechanism meant to fix it.
+    existing = graph.get_state(thread).values
+    return graph.invoke({} if existing else initial_state(), thread)
