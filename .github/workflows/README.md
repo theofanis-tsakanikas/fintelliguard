@@ -33,7 +33,7 @@ deploy phase.
 
 ### Required secrets (deploy phase)
 
-`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN`,
+`AWS_DEPLOY_ROLE_ARN` (OIDC — no static AWS keys), `DATABRICKS_HOST`, `DATABRICKS_TOKEN`,
 `DATABRICKS_ACCOUNT_ID`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`. Configure
 GitHub Environments (`bootstrap`, `dev`, `prod`) with required reviewers for approval
 gates.

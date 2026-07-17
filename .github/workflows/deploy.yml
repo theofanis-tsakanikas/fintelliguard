@@ -6,64 +6,136 @@ name: Deploy
 #   2. infra/databricks     (workspace + Unity Catalog) — consumes infra/aws
 #   3. agents/bedrock/terraform (agent, KB, guardrail, action-group Lambda) — consumes infra/aws
 #   4. infra/bundles        (DABs: DLT + serving + vector search + agent + grants)
+#
+# This workflow used to run three consecutive `terraform apply -auto-approve` with no
+# `terraform plan` anywhere, on long-lived IAM user keys, with no dependency on CI, from
+# any branch. CLAUDE.md's rule is "always plan before apply; never apply without reviewing
+# the plan" — the `environment:` gate approved a commit SHA, not a diff, because GitHub
+# environment approval fires before the first step runs.
+#
+# It is now two jobs. `plan` renders every layer's diff and uploads it. `apply` requires
+# the environment approval, downloads THAT plan, and applies exactly it. The approver sees
+# what they are approving.
 on:
   workflow_dispatch:
     inputs:
+      # `prod` used to be offered here. `infra/bundles/databricks.yml` declares only a
+      # `dev` target, so step 4 failed on prod AFTER three layers had already applied —
+      # a partial deploy with no rollback. It is not offered until a prod target exists.
       environment:
         description: Target environment
         type: choice
-        options: [dev, prod]
+        options: [dev]
         default: dev
 
 permissions:
   contents: read
+  id-token: write # OIDC — short-lived credentials, no stored AWS keys
+
+# Two dispatches racing would both apply. The DynamoDB lock protects Terraform state, but
+# nothing protects `databricks bundle deploy`.
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-central-1
+  TF_LAYERS: infra/aws infra/databricks agents/bedrock/terraform
 
 jobs:
-  deploy:
-    name: Apply all layers (${{ inputs.environment }})
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }} # GitHub environment protection / approvals
-    env:
-      AWS_REGION: eu-central-1
-      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-      TF_VAR_databricks_account_id: ${{ secrets.DATABRICKS_ACCOUNT_ID }}
-      TF_VAR_databricks_client_id: ${{ secrets.DATABRICKS_CLIENT_ID }}
-      TF_VAR_databricks_client_secret: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-    steps:
-      - uses: actions/checkout@v4
+  # The deployed artifact must be the validated one. Without this the workflow could apply
+  # code that fails lint, the red-team gate, or gate_proof — the Responsible-AI gates were
+  # enforced on PRs only, never on what actually shipped.
+  validate:
+    name: Re-run the gates on the deploying ref
+    uses: ./.github/workflows/ci.yml
 
-      - name: Configure AWS credentials
+  plan:
+    name: Plan all layers (${{ inputs.environment }})
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: eu-central-1
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: fintelliguard-plan
 
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 
-      - uses: databricks/setup-cli@main
-
-      - name: 1) infra/aws
-        working-directory: infra/aws
+      - name: Plan every layer
+        env:
+          TF_VAR_databricks_account_id: ${{ secrets.DATABRICKS_ACCOUNT_ID }}
+          TF_VAR_databricks_client_id: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          TF_VAR_databricks_client_secret: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: |
-          terraform init -input=false
-          terraform apply -auto-approve -input=false
+          set -euo pipefail
+          for dir in ${TF_LAYERS}; do
+            echo "::group::plan ${dir}"
+            terraform -chdir="${dir}" init -input=false -lockfile=readonly
+            terraform -chdir="${dir}" plan -input=false -out=tfplan
+            terraform -chdir="${dir}" show -no-color tfplan
+            echo "::endgroup::"
+          done
 
-      - name: 2) infra/databricks
-        working-directory: infra/databricks
-        run: |
-          terraform init -input=false
-          terraform apply -auto-approve -input=false
+      - name: Upload the plans for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.sha }}
+          # The binary plan is what `apply` consumes; nothing else may be applied.
+          path: |
+            infra/aws/tfplan
+            infra/databricks/tfplan
+            agents/bedrock/terraform/tfplan
+          retention-days: 5
+          if-no-files-found: error
 
-      - name: 3) agents/bedrock/terraform
-        working-directory: agents/bedrock/terraform
+  apply:
+    name: Apply the reviewed plan (${{ inputs.environment }})
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }} # approval happens HERE, with a plan to read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: fintelliguard-apply
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - uses: databricks/setup-cli@dd60b7b133203edca3e8f08b1e053c43a979296e # v1.8.0
+
+      - name: Download the approved plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.sha }}
+
+      # Applies the SAVED plan, not a fresh one: what was approved is what runs. A plan
+      # file also carries its own -auto-approve semantics, so there is no unreviewed diff.
+      - name: Apply every layer, in order
         run: |
-          terraform init -input=false
-          terraform apply -auto-approve -input=false
+          set -euo pipefail
+          for dir in ${TF_LAYERS}; do
+            echo "::group::apply ${dir}"
+            terraform -chdir="${dir}" init -input=false -lockfile=readonly
+            terraform -chdir="${dir}" apply -input=false tfplan
+            echo "::endgroup::"
+          done
 
       - name: 4) infra/bundles (Databricks Asset Bundles)
         working-directory: infra/bundles
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: databricks bundle deploy -t ${{ inputs.environment }}

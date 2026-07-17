@@ -261,3 +261,77 @@ resource "aws_vpc_endpoint" "databricks_privatelink" {
 
   tags = { Name = "${local.name}-vpce-databricks" }
 }
+
+# =============================================================================
+# VPC flow logs
+#
+# There were none. For a system whose own documentation calls itself high-risk under the
+# AI Act and describes a private cross-cloud call path, "who connected to what" was not
+# recorded anywhere — so neither the PrivateLink claim nor a suspected exfiltration could
+# be evidenced after the fact. Rejected traffic is the half that matters for both.
+# =============================================================================
+
+resource "aws_cloudwatch_log_group" "vpc_flow" {
+  name              = "/aws/vpc/${local.name}/flow-logs"
+  retention_in_days = var.flow_log_retention_days
+  kms_key_id        = aws_kms_key.main.arn
+
+  tags = { Name = "${local.name}-vpc-flow-logs" }
+}
+
+data "aws_iam_policy_document" "flow_log_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["vpc-flow-logs.amazonaws.com"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "flow_log" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams",
+    ]
+    # Scoped to this log group and its streams — not the account's logs.
+    resources = [
+      aws_cloudwatch_log_group.vpc_flow.arn,
+      "${aws_cloudwatch_log_group.vpc_flow.arn}:*",
+    ]
+  }
+}
+
+resource "aws_iam_role" "flow_log" {
+  name               = "${local.name}-vpc-flow-log"
+  assume_role_policy = data.aws_iam_policy_document.flow_log_assume.json
+}
+
+resource "aws_iam_role_policy" "flow_log" {
+  name   = "${local.name}-vpc-flow-log"
+  role   = aws_iam_role.flow_log.id
+  policy = data.aws_iam_policy_document.flow_log.json
+}
+
+resource "aws_flow_log" "main" {
+  vpc_id               = aws_vpc.main.id
+  traffic_type         = "ALL"
+  iam_role_arn         = aws_iam_role.flow_log.arn
+  log_destination_type = "cloud-watch-logs"
+  log_destination      = aws_cloudwatch_log_group.vpc_flow.arn
+
+  tags = { Name = "${local.name}-vpc-flow-logs" }
+}
+
+# The default security group is created by AWS with an implicit allow-all, and anything
+# that forgets to name a security group lands in it. Emptying it makes that failure mode
+# closed rather than open.
+resource "aws_default_security_group" "main" {
+  vpc_id = aws_vpc.main.id
+  tags   = { Name = "${local.name}-default-DO-NOT-USE" }
+  # No ingress, no egress blocks: both default to empty.
+}

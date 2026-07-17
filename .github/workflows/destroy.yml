@@ -6,10 +6,13 @@ name: Destroy (guarded)
 on:
   workflow_dispatch:
     inputs:
+      # `prod` is not offered: `infra/bundles/databricks.yml` declares only a `dev`
+      # target, so step 1 (`bundle destroy -t prod`) fails immediately and leaves every
+      # layer standing — a destroy that reports failure having destroyed nothing.
       environment:
         description: Environment to destroy
         type: choice
-        options: [dev, prod]
+        options: [dev]
         required: true
       confirm:
         description: Type the EXACT environment name to confirm destruction
@@ -17,6 +20,11 @@ on:
 
 permissions:
   contents: read
+  id-token: write # OIDC — no long-lived AWS keys for the most destructive workflow here
+
+concurrency:
+  group: destroy-${{ inputs.environment }}
+  cancel-in-progress: false
 
 jobs:
   destroy:
@@ -39,20 +47,20 @@ jobs:
           fi
           echo "Confirmed destruction of '${{ inputs.environment }}'."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: eu-central-1
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: fintelliguard-destroy
 
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 
-      - uses: databricks/setup-cli@main
+      - uses: databricks/setup-cli@dd60b7b133203edca3e8f08b1e053c43a979296e # v1.8.0
 
       - name: 1) infra/bundles
         working-directory: infra/bundles

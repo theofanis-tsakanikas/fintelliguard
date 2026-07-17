@@ -26,6 +26,7 @@ The parse is offline and credential-free: no AWS calls, no state, no plan.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -133,6 +134,26 @@ class TerraformModel:
                 f"(declared: {sorted(self.addresses)})"
             )
         return ref
+
+
+def json_body(value: str) -> Any:
+    """The document inside a `jsonencode(...)` expression, as Python data.
+
+    Policies live inside `jsonencode(...)`, so the parser hands them back as one opaque
+    string. That is how `AllowFromPublic = true` sat on the regulatory corpus, and
+    `Permission = ["aoss:*"]` sat two lines under a comment saying "no wildcards", with a
+    green build: nothing could see inside them. Unwrapping the expression makes the policy
+    a data structure a test can interrogate.
+
+    Terraform interpolations (`${local.x}`) stay as literal text inside the JSON strings,
+    which is fine — a test asserting on `AllowFromPublic` does not care what the collection
+    is called.
+    """
+    text = value.strip()
+    opener = "${jsonencode("
+    if not text.startswith(opener) or not text.endswith(")}"):
+        raise AssertionError(f"not a jsonencode expression: {value[:80]!r}")
+    return json.loads(text[len(opener) : -len(")}")])
 
 
 @lru_cache(maxsize=1)

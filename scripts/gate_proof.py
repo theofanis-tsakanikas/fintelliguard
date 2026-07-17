@@ -48,7 +48,16 @@ REPO = Path(__file__).resolve().parents[1]
 
 # What the gate needs to run. Deliberately excludes .venv/.git/caches: the copy must be
 # cheap enough that nobody is tempted to skip this script.
-COPY = ("agents", "ml", "pipelines", "simulator", "tests", "pyproject.toml")
+COPY = (
+    "agents",
+    "ml",
+    "pipelines",
+    "simulator",
+    "tests",
+    "pyproject.toml",
+    ".github",
+    "infra",
+)
 
 # Lines pytest prints on a CLEAN run too. A marker found on one of these is not a finding
 # — this is the distinction between "the gate reported my violation" and "the gate printed
@@ -194,6 +203,106 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/agents/bedrock/guardrails/test_guardrail_attachment.py",
         must_fail="test_denied_topics_match_the_policy_model",
     ),
+    # --- the deploy path ----------------------------------------------------- #
+    Attack(
+        name="deploy-static-aws-keys",
+        rationale=(
+            "What shipped: non-rotating IAM user keys with near-admin rights, living "
+            "indefinitely in GitHub secrets. The old test only looked for a literal AKIA "
+            "string, so it blessed the pattern instead of catching it."
+        ),
+        path=".github/workflows/deploy.yml",
+        old=(
+            "          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}\n"
+            "          role-session-name: fintelliguard-plan"
+        ),
+        new=(
+            "          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}\n"
+            "          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+        ),
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_cloud_workflows_use_oidc_not_long_lived_keys",
+    ),
+    Attack(
+        name="deploy-applies-without-a-plan",
+        rationale=(
+            "What shipped: three consecutive `apply -auto-approve` and no plan step, in a "
+            "repo whose rules say never apply without reviewing the plan."
+        ),
+        path=".github/workflows/deploy.yml",
+        old='terraform -chdir="${dir}" apply -input=false tfplan',
+        new='terraform -chdir="${dir}" apply -auto-approve -input=false',
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_deploy_plans_before_it_applies",
+    ),
+    Attack(
+        name="deploy-skips-ci",
+        rationale=(
+            "Deploy had no dependency on CI and no branch filter, so lint-failing, "
+            "red-team-failing code could be applied straight to the cloud."
+        ),
+        path=".github/workflows/deploy.yml",
+        old=("  plan:\n    name: Plan all layers (${{ inputs.environment }})\n    needs: validate"),
+        new="  plan:\n    name: Plan all layers (${{ inputs.environment }})",
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_deploy_only_ships_what_ci_validated",
+    ),
+    Attack(
+        name="deploy-offers-a-phantom-prod",
+        rationale=(
+            "What shipped: `prod` in the dropdown with no prod target in the bundle, so "
+            "the deploy failed at step 4 AFTER three layers had already applied."
+        ),
+        path=".github/workflows/deploy.yml",
+        old="        options: [dev]\n        default: dev",
+        new="        options: [dev, prod]\n        default: dev",
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_every_offered_environment_has_a_bundle_target",
+    ),
+    # --- the knowledge base -------------------------------------------------- #
+    Attack(
+        name="kb-exposed-to-internet",
+        rationale=(
+            "What shipped: the vector store holding the AML/PSD2 corpus accepted public "
+            "network connections, in a file whose header says 'private'. Invisible to a "
+            "grep because the policy lives inside jsonencode()."
+        ),
+        path="agents/bedrock/terraform/knowledge_base.tf",
+        old=(
+            "    AllowFromPublic = false\n"
+            "    SourceVPCEs     = [aws_opensearchserverless_vpc_endpoint.kb.id]"
+        ),
+        new="    AllowFromPublic = true",
+        gate="tests/agents/bedrock/test_knowledge_base_security.py",
+        must_fail="test_the_regulatory_corpus_is_not_reachable_from_the_public_internet",
+    ),
+    Attack(
+        name="kb-private-but-dangling",
+        rationale=(
+            "Hardened-looking and broken: AllowFromPublic=false pointing at a VPC endpoint "
+            "that does not exist locks out the Knowledge Base itself."
+        ),
+        path="agents/bedrock/terraform/knowledge_base.tf",
+        old="SourceVPCEs     = [aws_opensearchserverless_vpc_endpoint.kb.id]",
+        new="SourceVPCEs     = [aws_opensearchserverless_vpc_endpoint.deleted.id]",
+        gate="tests/agents/bedrock/test_knowledge_base_security.py",
+        must_fail="test_the_private_network_rule_points_at_a_vpc_endpoint_that_exists",
+    ),
+    Attack(
+        name="kb-wildcard-permissions",
+        rationale=(
+            "`aoss:*` on the data plane includes destroying the corpus every verdict is "
+            "grounded in — and it sat under a comment promising no wildcards."
+        ),
+        path="agents/bedrock/terraform/knowledge_base.tf",
+        old=(
+            'Permission   = ["aoss:CreateIndex", "aoss:DescribeIndex", '
+            '"aoss:UpdateIndex", "aoss:ReadDocument", "aoss:WriteDocument"]'
+        ),
+        new='Permission   = ["aoss:*"]',
+        gate="tests/agents/bedrock/test_knowledge_base_security.py",
+        must_fail="test_the_kb_role_holds_no_wildcard_data_plane_permissions",
+    ),
     # --- the feature contract ------------------------------------------------ #
     Attack(
         name="merchant-risk-table-optional-again",
@@ -204,7 +313,7 @@ ATTACKS: tuple[Attack, ...] = (
         ),
         path="ml/features/adapter_stream.py",
         old=(
-            'merchant_risk = transforms.risk_score('
+            "merchant_risk = transforms.risk_score("
             'current["merchant_id"], merchant_risk_table, default=0.0)'
         ),
         new="merchant_risk = 0.0",

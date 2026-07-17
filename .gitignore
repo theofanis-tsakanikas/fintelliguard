@@ -1,6 +1,12 @@
 # ---- Terraform ----
 **/.terraform/*
-.terraform.lock.hcl
+# NOT .terraform.lock.hcl — lock files are COMMITTED, deliberately.
+#
+# Ignoring them meant every `terraform init` on a fresh clone or CI runner re-resolved
+# providers from scratch. With `agents/bedrock` constrained at `>= 5.40` — no upper bound —
+# that silently picks up the next major on release, inside a workflow that ran
+# `apply -auto-approve` with no plan. It is both a reproducibility hole and a supply-chain
+# one, and it was the only entry in this file that was actively wrong.
 *.tfstate
 *.tfstate.*
 *.tfvars
@@ -52,3 +58,9 @@ htmlcov/
 .vscode/
 *.swp
 .DS_Store
+
+# === Pre-publish security baseline (added 2026-06-22) ===
+PRE-PUBLISH.md
+*.key
+*.p12
+*.pfx

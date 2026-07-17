@@ -1,0 +1,73 @@
+# Checkov configuration for the Terraform layers.
+#
+# `pyproject.toml` excludes `infra/` from ruff, so `terraform fmt` was the only automated
+# check any of this code had. That is how the vector store holding the regulatory corpus
+# came to accept public network connections, and how `aoss:*` came to sit two lines under a
+# comment promising no wildcards: nothing was looking. Both are stock checkov findings that
+# would have been caught on the day they were written.
+#
+# Every skip below is a deviation WITH A REASON. A skip without one is a finding someone
+# decided not to see, and this project's history has enough of those.
+#
+# Run locally: make iac-scan
+
+quiet: true
+compact: true
+
+directory:
+  - infra/aws
+  - infra/databricks
+  - agents/bedrock/terraform
+
+skip-check:
+  # --- False positives on this codebase --------------------------------------
+
+  # CKV_AWS_109/111/356: "IAM policy allows write / permissions-management / '*' resource
+  # without constraints", raised against `aws_iam_policy_document.kms`. That document is a
+  # KMS *key policy*: its Resource is the key the policy is attached to, and AWS requires
+  # "*" to mean exactly that. There is no narrower value to write. The authored IAM
+  # policies elsewhere in these layers are ARN-scoped, and `knowledge_base.tf`'s data-plane
+  # wildcard — a real one — is now caught by tests/agents/bedrock/test_knowledge_base_security.py.
+  - CKV_AWS_109
+  - CKV_AWS_111
+  - CKV_AWS_356
+
+  # CKV2_AWS_5: "security groups are attached to a resource". The MSK, Lambda and
+  # Databricks data-plane security groups are consumed by OTHER Terraform layers via
+  # remote-state outputs, which checkov cannot follow across state boundaries. Per-layer
+  # isolated state is a deliberate rule of this project (CLAUDE.md); this is its cost.
+  - CKV2_AWS_5
+
+  # CKV_AWS_130: "subnets do not assign public IPs by default". Only the public subnets do,
+  # and they exist to host the NAT gateway; every workload runs in the private subnets.
+  - CKV_AWS_130
+
+  # --- Bootstrap chicken-and-egg ---------------------------------------------
+
+  # CKV_AWS_145 / CKV_AWS_119: "encrypt S3 / DynamoDB with a customer-managed key".
+  # The state backend must exist BEFORE the layer that creates the KMS key — it is where
+  # that layer's state lives. AES256 / AWS-managed SSE here is a documented limitation, not
+  # an oversight. Re-encrypting the backend under the CMK once it exists is the standard
+  # resolution and has not been done.
+  - CKV_AWS_145
+  - CKV_AWS_119
+
+  # --- Deliberate scope decisions --------------------------------------------
+
+  # CKV_AWS_144: "S3 cross-region replication". Single-region development deployment with
+  # an explicit ~250 EUR/month ceiling (CLAUDE.md). A production DR decision, not a
+  # security one.
+  - CKV_AWS_144
+
+  # CKV2_AWS_62: "S3 event notifications". Nothing in this architecture reacts to bucket
+  # events — ingestion is Kafka and Auto Loader. An unused notification is not a control.
+  - CKV2_AWS_62
+
+  # CKV2_AWS_57: "Secrets Manager automatic rotation". The Databricks PAT in this secret is
+  # rotated by Databricks, not by AWS; an AWS rotation Lambda for a credential AWS does not
+  # own would create a second source of truth. A real gap for any secret AWS *can* rotate.
+  - CKV2_AWS_57
+
+  # CKV_AWS_18: "S3 access logging". Needs a log-target bucket with its own lifecycle and
+  # access policy. Worth doing; not done. Tracked here rather than hidden.
+  - CKV_AWS_18

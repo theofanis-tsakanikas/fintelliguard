@@ -69,7 +69,7 @@ variable "raw_bucket_name" {
 variable "raw_retention_days" {
   description = "Days after which raw objects expire (lifecycle). Controls storage cost."
   type        = number
-  default     = 90
+  default     = 365
 }
 
 variable "raw_noncurrent_retention_days" {
@@ -114,4 +114,10 @@ variable "msk_broker_ebs_gb" {
   description = "EBS volume size (GB) per MSK broker."
   type        = number
   default     = 10
+}
+
+variable "flow_log_retention_days" {
+  description = "Retention for VPC flow logs. 90 days covers a typical audit lookback."
+  type        = number
+  default     = 365
 }
