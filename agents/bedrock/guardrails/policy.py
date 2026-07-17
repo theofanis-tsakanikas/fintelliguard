@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from agents.bedrock.pii import PII_PATTERNS
+
 # Policy-class identifiers (match the Terraform policy blocks).
 PROMPT_ATTACK = "PROMPT_ATTACK"
 DENIED_TOPIC = "DENIED_TOPIC"
@@ -79,10 +81,10 @@ _PII_REQUEST_SIGNATURES = (
 )
 
 # Raw PII value patterns (for output redaction): a bare PAN or email in free text.
-_PII_VALUE_PATTERNS = (
-    r"\b(?:\d[ -]?){13,19}\b",  # card-number-like digit run
-    r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b",  # email
-)
+# Shared with the verdict gate and the decision log — the three used to carry separate
+# copies, and the copy here matched the mantissa of a float, so a verdict quoting
+# `amount_log = 3.93182563272432` was blocked as a card-number leak.
+_PII_VALUE_PATTERNS = PII_PATTERNS
 
 
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:

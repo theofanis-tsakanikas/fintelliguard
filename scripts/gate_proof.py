@@ -203,6 +203,112 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/agents/bedrock/guardrails/test_guardrail_attachment.py",
         must_fail="test_denied_topics_match_the_policy_model",
     ),
+    # --- the verdict gate ---------------------------------------------------- #
+    Attack(
+        name="grounding-by-substring",
+        rationale=(
+            "What shipped: `citation in ref or ref in citation`. A fabricated article "
+            "appended to a real one was ACCEPTED, because the real one is a substring of "
+            "the pair — the exact threat the grounding check exists to stop."
+        ),
+        path="agents/bedrock/eval/judge.py",
+        old="    cited = provisions(citation)\n    if not cited:\n        return set(), False",
+        new=(
+            "    if any(citation.lower() in r.lower() or r.lower() in citation.lower()"
+            " for r in context_refs):\n        return set(), True\n"
+            "    cited = provisions(citation)\n    if not cited:\n        return set(), False"
+        ),
+        gate="tests/agents/bedrock/eval/test_verdict_gate.py",
+        must_fail="test_labeled_set_matches_expected_outcomes",
+    ),
+    Attack(
+        name="decision-softening-allowed",
+        rationale=(
+            "What shipped: the escalation cue list applied symmetrically. The model said "
+            "block, the agent said allow, and the word 'however' was the justification."
+        ),
+        path="agents/bedrock/eval/judge.py",
+        # Restores the OLD rule exactly: no direction check, and "however" back in the cue
+        # list. Removing only the direction check is not the old bug — the verdict still
+        # trips the cue check, so the gate goes red for the wrong reason and the attack
+        # proves nothing. gate_proof caught that: it reported LEAKED until this was
+        # faithful to what actually shipped.
+        old=(
+            "    if _CAUTION[action] < _CAUTION[hint]:\n"
+            '        # The direction that used to be waved through on the word "however".\n'
+        ),
+        new="    if False:  # noqa: SIM108\n",
+        gate="tests/agents/bedrock/eval/test_verdict_gate.py",
+        must_fail="test_labeled_set_matches_expected_outcomes",
+    ),
+    Attack(
+        name="faithfulness-back-to-prose-only",
+        rationale=(
+            "What shipped: faithfulness scanned prose for 15 English phrases, so two "
+            "invented drivers in one sentence produced zero invented drivers."
+        ),
+        path="agents/bedrock/eval/judge.py",
+        old="    invented = sorted(set(declared) - top)",
+        new="    invented = []",
+        gate="tests/agents/bedrock/eval/test_verdict_gate.py",
+        must_fail="test_labeled_set_matches_expected_outcomes",
+    ),
+    Attack(
+        name="pii-pattern-matches-floats-again",
+        rationale=(
+            "The card-number pattern matched the mantissa of a float, so every verdict "
+            "quoting a computed feature was a 'PII leak' — a control that blocks correct "
+            "output, with a published false-positive rate."
+        ),
+        path="agents/bedrock/pii.py",
+        old=r'CARD_NUMBER = r"(?<![\d.])(?:\d[ -]?){13,19}(?!\.?\d)"',
+        new=r'CARD_NUMBER = r"\b(?:\d[ -]?){13,19}\b"',
+        gate="tests/agents/bedrock/test_pii.py",
+        must_fail="test_arithmetic_is_not_pii",
+    ),
+    Attack(
+        name="decision-log-drops-the-model-version",
+        rationale=(
+            "Without it, 'which model decided this transaction?' has no answer for any "
+            "decision the system ever made, and the model card documents a model that "
+            "cannot be tied to its own outputs."
+        ),
+        path="ml/serving/stream_service.py",
+        old='                model_version=str(scored["model_version"]),',
+        new='                model_version="",',
+        gate="tests/agents/bedrock/eval/test_decision_log.py",
+        must_fail="test_the_record_carries_the_model_version_that_made_the_decision",
+    ),
+    Attack(
+        name="decision-log-only-records-flagged-cases",
+        rationale=(
+            "The old stdout log line recorded flagged cases only. AI Act Art. 12 is about "
+            "every inference, and the ~99% that are approved are the ones a dispute is "
+            "about."
+        ),
+        path="ml/serving/stream_service.py",
+        old="    if decisions is not None:",
+        new="    if decisions is not None and tier2:",
+        gate="tests/agents/bedrock/eval/test_decision_log.py",
+        must_fail="test_every_scored_transaction_is_recorded",
+    ),
+    Attack(
+        name="grounding-score-hardcoded-to-one",
+        rationale=(
+            "What shipped: `evaluate_output(..., grounding_score=1.0)`. The GROUNDING "
+            "policy class could never fire in the only path that runs it."
+        ),
+        path="ml/serving/stream_service.py",
+        old=(
+            "    cited = provisions(reasoning)\n"
+            "    if not cited:\n"
+            "        # Reasoning that cites nothing is not grounded in anything.\n"
+            "        return 0.0"
+        ),
+        new="    return 1.0",
+        gate="tests/serving/test_local_runtime.py",
+        must_fail="test_grounding_is_measured_not_asserted",
+    ),
     # --- the deploy path ----------------------------------------------------- #
     Attack(
         name="deploy-static-aws-keys",

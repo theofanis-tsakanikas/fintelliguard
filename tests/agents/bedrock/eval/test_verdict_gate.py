@@ -25,6 +25,7 @@ def test_gold_verdict_passes_all_checks():
     verdict = {
         "fraud_score": 0.78,
         "reasoning": "A velocity spike with a country mismatch supports enhanced due diligence.",
+        "drivers": ["txn_velocity_1h", "country_mismatch"],
         "regulatory_reference": "AMLD5 Art. 18 (enhanced due diligence)",
         "recommended_action": "review",
     }
@@ -80,6 +81,7 @@ def test_justified_escalation_accepted():
     verdict = {
         "fraud_score": 0.85,
         "reasoning": "Country mismatch and amount anomaly justify escalating beyond the hint.",
+        "drivers": ["country_mismatch", "amount_zscore"],
         "regulatory_reference": "PSD2 Art. 97 (SCA)",
         "recommended_action": "block",
     }

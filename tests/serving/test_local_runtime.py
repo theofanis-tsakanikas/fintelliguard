@@ -195,3 +195,42 @@ def test_exporter_emits_the_dashboard_metric_names():
     assert "fintelliguard_fraud_score_bucket" in exposition
     assert "fintelliguard_verdict_gate_total" in exposition
     assert 'endpoint="fintelliguard-fraud-score"' in exposition
+
+
+def test_grounding_is_measured_not_asserted():
+    """The guardrail's grounding threshold must be reachable.
+
+    `evaluate_output` was called with `grounding_score=1.0` — a literal. So
+    `policy.py`'s `grounding_score < grounding_threshold` branch could never be taken, and
+    the GROUNDING policy class was dead code in the only path that runs it, while
+    `deploy/local/README.md` advertised the guardrail as real. A control with an
+    unreachable branch is a control that does not exist.
+    """
+    from ml.serving.stream_service import STUB_REFERENCES, estimate_grounding
+
+    grounded = estimate_grounding(
+        "This follows from PSD2 Art. 97 (Strong Customer Authentication).", STUB_REFERENCES
+    )
+    invented = estimate_grounding(
+        "This follows from PSD2 Art. 999 and GDPR Art. 5.", STUB_REFERENCES
+    )
+    silent = estimate_grounding("This transaction looks risky.", STUB_REFERENCES)
+
+    assert grounded == 1.0, "a verdict citing retrieved regulation must score fully grounded"
+    assert invented < GuardrailPolicy().grounding_threshold, (
+        f"a verdict citing regulation that was never retrieved scored {invented} — at or "
+        "above the threshold, so the guardrail would let it through"
+    )
+    assert silent == 0.0, "reasoning that cites nothing is grounded in nothing"
+
+
+def test_a_verdict_citing_unretrieved_regulation_is_blocked_by_the_guardrail():
+    """End to end: the grounding policy class actually engages on the funnel's own path."""
+    from ml.serving.stream_service import STUB_REFERENCES, estimate_grounding
+
+    reasoning = "The score is consistent with a block under PSD2 Art. 999."
+    decision = GuardrailPolicy().evaluate_output(
+        reasoning, grounding_score=estimate_grounding(reasoning, STUB_REFERENCES)
+    )
+    assert decision.blocked
+    assert decision.policy == "GROUNDING"

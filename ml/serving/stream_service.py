@@ -19,9 +19,18 @@ import logging
 from collections import deque
 from collections.abc import Mapping
 from datetime import datetime
+from pathlib import Path
 from time import perf_counter
 
-from agents.bedrock.eval.judge import VerdictContext, evaluate_verdict
+from agents.bedrock.eval.decision_log import (
+    DecisionRecord,
+    DecisionSink,
+    JsonlSink,
+    new_decision_id,
+    record_decision,
+    utc_now,
+)
+from agents.bedrock.eval.judge import VerdictContext, evaluate_verdict, provisions
 from agents.bedrock.guardrails.policy import GuardrailPolicy
 from ml.features.adapter_stream import FeatureComputationError, compute_features
 from ml.serving.local_model import train_demo_scorer
@@ -96,16 +105,40 @@ def build_stub_verdict(
     driver = top[0] if top else "the aggregated risk features"
     reasoning = (
         f"The fraud model flagged this transaction; its strongest driver was {driver}. "
-        f"The score is consistent with a {hint} recommendation under the cited controls."
+        f"The score is consistent with a {hint} recommendation under {references[0]}."
     )
     verdict = {
         "fraud_score": scored["fraud_score"],
         "reasoning": reasoning,
+        "drivers": [driver] if top else [],
         "regulatory_reference": references[0],
         "recommended_action": hint,
     }
     context = VerdictContext(top_features=top, retrieved_references=references, decision_hint=hint)
     return verdict, context
+
+
+def estimate_grounding(reasoning: str, references: tuple[str, ...]) -> float:
+    """A crude grounding score for the local funnel: how much of the claim is supported.
+
+    `evaluate_output` was called with `grounding_score=1.0`, a hardcoded constant, so
+    `policy.py`'s `grounding_score < grounding_threshold` branch could NEVER fire. The
+    GROUNDING policy class was dead code in the only path that runs it, while the local
+    README advertised the guardrail as real.
+
+    This is deliberately simple and deliberately not 1.0: it is the fraction of the
+    verdict's cited provisions that the retrieved context actually contains. In AWS this
+    number comes from Bedrock's contextual-grounding filter; here it at least varies with
+    the input, so the threshold is a live control rather than an unreachable branch.
+    """
+    cited = provisions(reasoning)
+    if not cited:
+        # Reasoning that cites nothing is not grounded in anything.
+        return 0.0
+    available: set[str] = set()
+    for ref in references:
+        available |= provisions(ref)
+    return len(cited & available) / len(cited)
 
 
 def process_transaction(
@@ -115,12 +148,18 @@ def process_transaction(
     guardrail: GuardrailPolicy,
     metrics: ServingMetrics,
     merchant_risk_table: Mapping[str, float],
+    decisions: DecisionSink | None = None,
 ) -> dict:
     """Run one transaction through the whole funnel; update metrics; return a summary.
 
     `merchant_risk_table` must be the table the scorer was TRAINED with — see
     `ml/features/merchant_risk.py`. It was not passed at all, so `merchant_risk_score` was
     0.0 on every transaction this service has scored.
+
+    `decisions` receives one `DecisionRecord` per scored transaction — EVERY transaction,
+    not only the flagged ones. The AI-Act document already claims this exists; nothing
+    implemented it, and the nearest thing was a stdout log line for flagged cases carrying
+    no model version.
     """
     card = str(contract.get("card_hash", ""))
     try:
@@ -139,22 +178,53 @@ def process_transaction(
     metrics.observe_request(perf_counter() - started, scored["decision_hint"])
     metrics.observe_score(scored["fraud_score"])
 
+    decision_id = new_decision_id()
     result = {
         "status": "scored",
+        "decision_id": decision_id,
         "transaction_id": record.transaction_id,
         "fraud_score": round(float(scored["fraud_score"]), 4),
         "decision": scored["decision_hint"],
     }
 
+    tier2: dict[str, object] = {}
     # Tier 2 (verdict gate + guardrail) only for flagged transactions.
     if scored["decision_hint"] in (DECISION_REVIEW, DECISION_BLOCK):
         verdict, context = build_stub_verdict(scored)
         gate = evaluate_verdict(verdict, context)
         metrics.record_verdict(gate.accepted)
-        guard = guardrail.evaluate_output(verdict["reasoning"], grounding_score=1.0)
+        grounding = estimate_grounding(verdict["reasoning"], STUB_REFERENCES)
+        guard = guardrail.evaluate_output(verdict["reasoning"], grounding_score=grounding)
         if guard.blocked:
             metrics.record_guardrail_block(guard.policy)
         result["verdict_accepted"] = gate.accepted
+        tier2 = {
+            "verdict": verdict,
+            "gate_accepted": gate.accepted,
+            "gate_failures": gate.failures,
+            "guardrail_blocked": guard.blocked,
+            "guardrail_policy": guard.policy,
+            "grounding_score": grounding,
+        }
+
+    if decisions is not None:
+        record_decision(
+            decisions,
+            DecisionRecord(
+                decision_id=decision_id,
+                transaction_id=record.transaction_id,
+                card_hash=record.card_hash,
+                recorded_at=utc_now(),
+                # The field every consumer used to drop. Without it no past decision can be
+                # tied to the model that made it.
+                model_version=str(scored["model_version"]),
+                features=record.features.as_dict(),
+                fraud_score=float(scored["fraud_score"]),
+                decision_hint=str(scored["decision_hint"]),
+                top_features=tuple(f["name"] for f in scored["top_features"]),
+                **tier2,  # type: ignore[arg-type]
+            ),
+        )
 
     history.append(card, contract)
     return result
@@ -168,6 +238,7 @@ def run(
     scorer: FraudScorer | None = None,
     environment: str = "local",
     max_messages: int | None = None,
+    decision_log_path: str = "/var/log/fintelliguard/decisions.jsonl",
 ) -> None:
     """Consume the topic and serve `/metrics`. `confluent_kafka` is imported lazily so the
     module (and its unit tests) stay importable without the native Kafka client."""
@@ -183,6 +254,9 @@ def run(
     metrics = ServingMetrics(environment=environment, model_version=scorer.config.model_version)
     guardrail = GuardrailPolicy()
     history = CardHistoryStore()
+    # Append-only decision records — the audit trail the AI-Act document claims. A file
+    # here; S3 Object Lock or a Delta table with an audit grant in AWS.
+    decisions = JsonlSink(Path(decision_log_path))
     serve_metrics(metrics_port)
 
     consumer = Consumer(
@@ -212,7 +286,7 @@ def run(
                 metrics.record_quarantine()
                 continue
             result = process_transaction(
-                contract, history, scorer, guardrail, metrics, merchant_risk_table
+                contract, history, scorer, guardrail, metrics, merchant_risk_table, decisions
             )
             processed += 1
             if result["status"] == "scored" and result["decision"] != DECISION_ALLOW:

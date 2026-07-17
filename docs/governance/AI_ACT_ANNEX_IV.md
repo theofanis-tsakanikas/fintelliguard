@@ -23,16 +23,19 @@ FintelliGuard scores card transactions for fraud and produces documented, regula
 
 ## 5. Guardrails & safety controls
 
-- **Input/output guardrail** covering prompt-attack, the `investment-advice` denied topic, PII anonymisation (CREDIT_DEBIT_CARD_NUMBER, NAME, EMAIL), and contextual grounding (threshold 0.75). Red-team coverage: **16/16 blocked** (see [Guardrail Coverage](GUARDRAIL_COVERAGE.md)).
-- **Output verdict gate** — every compliance verdict must pass deterministic checks before reaching an analyst: fraud_score, reasoning, regulatory_reference, recommended_action present, no raw PII, every regulatory reference grounded in retrieved text, every driver one of the model's `top_features`, and a decision consistent with the model hint (or an explicitly justified escalation).
+- **Input/output guardrail** covering prompt-attack, the `investment-advice` denied topic, PII anonymisation (CREDIT_DEBIT_CARD_NUMBER, NAME, EMAIL), and contextual grounding (threshold 0.75). The guardrail is bound to the agent at an immutable policy version, so every verdict is attributable to a fixed set of rules; a test asserts the binding resolves, because the guardrail was once provisioned and never attached.
+- **Scope of the offline red-team score.** `agents/bedrock/guardrails/policy.py` is a signature model standing in for Bedrock's ML classifier so threat coverage can be regression-tested in CI without calling AWS. Its detectors were written from the red-team prompts they are scored against, so the 16/16 figure in the [coverage report](GUARDRAIL_COVERAGE.md) measures that the model is wired to its test set — **not** the classifier that runs in production, and not a safety property. It is quoted here as a regression score and must not be read as a measured block rate.
+- **Output verdict gate** — every compliance verdict must pass deterministic checks before reaching an analyst: fraud_score, reasoning, regulatory_reference, recommended_action, drivers present, no raw PII, every regulatory reference grounded in retrieved text, every driver one of the model's `top_features`, and a decision consistent with the model hint (or an explicitly justified escalation).
 
 ## 6. Human oversight
 
-- Tier 3 analysts investigate flagged cases with the Mosaic AI copilot; the agent never auto-executes an irreversible action. Low-confidence / ungrounded verdicts are rejected by the gate and routed to human review.
+- Tier 3 analysts investigate flagged cases with the Mosaic AI copilot. Verdicts that fail the gate are rejected and never reach an analyst as findings.
+- **The agent may escalate, never soften.** `recommended_action` more cautious than the model's `decision_hint` is accepted with a stated reason; anything less cautious is refused outright by the gate. Releasing a transaction the model flagged is a human decision, not a generated one.
 
 ## 7. Post-market monitoring
 
-- **Drift detection** (`ml/monitoring/drift.py`): PSI per feature, alert at ≥ 0.25; every inference is logged (input → features → model → guardrails → output) for audit.
+- **Drift detection** (`ml/monitoring/drift.py`): PSI per feature, alert at ≥ 0.25 (+ two-sample KS). **Scope:** this is a library and a threshold, not a running monitor — no job computes drift on a schedule, no reference snapshot is persisted, and no alert sink is wired. Stated plainly because this document previously implied otherwise.
+- **Decision records** (`agents/bedrock/eval/decision_log.py`): every scored transaction — not only the flagged ones — writes one replayable record: input keys → the 15 features → `model_version`, score and `top_features` → the verdict, the gate result and the guardrail outcome, under a correlation id. The record refuses to be written if it would carry raw PII. The sink is injected, so retention and immutability are a deployment decision (S3 Object Lock / a Delta table with an audit grant); the local funnel writes append-only JSONL, which has the same contract and none of the guarantees.
 
 ## 8. Record-keeping
 
