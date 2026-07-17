@@ -43,8 +43,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from ml.features import adapter_ieee, adapter_stream, transforms
-from ml.features.schema import FEATURE_NAMES, FeatureVector
+from ml.features import adapter_stream
+from ml.features.schema import FEATURE_NAMES, PRIMARY_KEY, FeatureVector
 from ml.features.semantics import INVARIANTS, check_invariants
 
 REFERENCE = datetime(2026, 1, 1, 0, 0, 0)
@@ -158,42 +158,33 @@ def _as_ieee_row(journey: list[Event], index: int, card: str) -> dict:
     }
 
 
-def _ieee_context(journey: list[Event], index: int) -> adapter_ieee.CardContext:
-    """The per-card aggregates a batch job computes — from STRICTLY PRIOR events only.
+def _ieee_features(journey: list[Event], card: str) -> list[FeatureVector]:
+    """Every row's features, computed by the PRODUCTION training path.
 
-    Prior-only, deliberately. The training path computed these over the whole card group
-    including the future (`gold_transforms._training_group`), which is the leakage the
-    stream adapter's docstring promises does not exist.
+    This used to build its own `CardContext` — a THIRD implementation, alongside the two
+    adapters it was meant to be comparing. So the test proved that `adapter_stream` and
+    `adapter_ieee` agree under a context `_training_group` never builds, and the real
+    training path diverged underneath it in three ways at once:
+
+        _ieee_context (the test)          _training_group (production)
+        device_seen_before passed         never passed -> C6 fallback
+        amount_mean/std over 30 days      unbounded, every prior row
+        active_hours over 30 days         unbounded, every prior row
+
+    A parity test that constructs its own version of one side is testing its own
+    construction. It goes through `gold_transforms` now, so what it proves is what ships.
     """
-    event = journey[index]
-    prior = [e for e in journey[:index] if e.when < event.when]
-    within_30d = [e for e in prior if event.when - e.when <= timedelta(days=30)]
-    amounts = [e.amount for e in within_30d]
+    import pandas as pd
 
-    mean = sum(amounts) / len(amounts) if amounts else event.amount
-    if len(amounts) >= 2:
-        var = sum((a - mean) ** 2 for a in amounts) / (len(amounts) - 1)
-        std = var**0.5
-    else:
-        std = 0.0
+    from pipelines.gold.gold_transforms import _training_group
 
-    # The SHARED modal definition — not a re-implementation. Re-implementing it here is
-    # what the training path did, and it resolved ties differently from the stream adapter,
-    # inverting country_mismatch for any card with two equally-common countries.
-    modal = transforms.modal_value(e.country for e in prior)
-
-    # The batch job knows the card's active hours and its device history; the adapter must
-    # be given them rather than guessing. Both are prior-only.
-    active_hours = tuple(e.when.hour for e in within_30d) or None
-    device_seen = any(e.device == event.device for e in prior)
-
-    return adapter_ieee.CardContext(
-        amount_mean=mean,
-        amount_std=std,
-        modal_addr2=modal,
-        active_hours=active_hours,
-        device_seen_before=device_seen,
-    )
+    rows = [{**_as_ieee_row(journey, i, card), "isFraud": 0} for i in range(len(journey))]
+    produced = _training_group(pd.DataFrame(rows))
+    by_id = {row[PRIMARY_KEY]: row for row in produced.to_dict("records")}
+    return [
+        FeatureVector(**{name: by_id[event.txn_id][name] for name in FEATURE_NAMES})
+        for event in journey
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -212,22 +203,33 @@ PROXY_ONLY = {
     # transactions at the card's mean. The *invariant* (>= amount_usd) binds both sides;
     # exact equality cannot, and pretending otherwise would be the tautology again.
     "amount_sum_1h",
+    # IEEE-CIS carries device identity only in the `id_*`/`DeviceInfo` columns, which the
+    # Gold training path does not resolve — so it falls back to C6, "this device transacted
+    # in the last 24h", while the stream means "this device was seen on this card, ever".
+    # Related quantities, different questions. Its INDEPENDENCE is what matters and is
+    # tested separately; forcing exact equality here would mean passing the answer into the
+    # context, which is what made this test prove its own construction.
+    "device_seen_before",
 }
 
 
 def _both_adapters(seed: int):
-    """Run one journey through both encodings and return the aligned vectors."""
+    """Run one journey through both encodings and return the aligned vectors.
+
+    The IEEE side goes through `pipelines/gold/gold_transforms._training_group` — the code
+    that actually builds the training table — not a context this test invents.
+    """
     journey = _journey(seed)
     contracts = [_as_contract(e, CARD) for e in journey]
     first_seen = journey[0].when
 
+    ieee = _ieee_features(journey, CARD)
     pairs = []
     for i in range(len(journey)):
         stream_rec = adapter_stream.compute_features(
             contracts[i], contracts[:i], card_first_seen=first_seen
         )
-        ieee_rec = adapter_ieee.map_row(_as_ieee_row(journey, i, CARD), _ieee_context(journey, i))
-        pairs.append((stream_rec.features, ieee_rec.features))
+        pairs.append((stream_rec.features, ieee[i]))
     return pairs
 
 
@@ -317,17 +319,29 @@ def test_device_seen_before_carries_information_beyond_card_age():
 
 
 def test_every_invariant_is_exercised_by_this_corpus():
-    """The journey must actually reach the states the invariants describe.
+    """The corpus must reach every invariant's EDGE, or the invariant proves nothing.
 
-    Without this, an invariant can be added, never triggered, and mistaken for coverage —
-    the same shape of self-deception as a gate nobody has attacked.
-    """
-    vectors = [f for pair in _both_adapters(seed=1) for f in pair]
-    unexercised = [
-        inv.name
-        for inv in INVARIANTS
-        # An invariant is exercised if the corpus contains rows on both sides of its
-        # boundary; a corpus where it is trivially true everywhere proves nothing.
+    This test did the exact opposite of its stated purpose:
+
         if len({inv.holds(v) for v in vectors}) == 1 and not any(inv.holds(v) for v in vectors)
+
+    That flags an invariant only when it is FALSE on every row — which
+    `test_both_adapters_satisfy_the_canonical_semantics` already fails on, harder. A
+    trivially-true invariant, the thing it claimed to catch, gives `{True}`, so `not any(...)`
+    is False and it passes silently. Planting `lambda f: f.amount_usd == f.amount_usd` — pure
+    coverage theatre — left all 27 tests green.
+
+    "Both sides of the boundary" was the wrong idea to begin with: an invariant that must
+    ALWAYS hold has no rows on its false side, by construction. The answerable question is
+    whether the corpus ever touches the edge. A journey where `txn_velocity_1h` is never 1
+    cannot distinguish a floor of 1 from a floor of 0, and the invariant it "covers" is
+    decoration.
+    """
+    vectors = [f for seed in (1, 2, 3, 7, 11) for pair in _both_adapters(seed) for f in pair]
+    never_at_the_edge = [
+        inv.name for inv in INVARIANTS if not any(inv.at_boundary(v) for v in vectors)
     ]
-    assert not unexercised, f"invariants never satisfied by any row (bad corpus?): {unexercised}"
+    assert not never_at_the_edge, (
+        f"the corpus never reaches the boundary of {never_at_the_edge}, so those invariants "
+        "would pass with the floor removed — they are covered in name only"
+    )

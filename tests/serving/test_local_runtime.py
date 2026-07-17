@@ -326,3 +326,49 @@ def test_a_refused_decision_record_does_not_take_the_funnel_down(scorer):
         )
         == 1.0
     ), "the refusal was swallowed silently — an unrecorded decision must page someone"
+
+
+class _FabricatesRegulation(GuardrailPolicy):
+    """Left as the real policy — the point is that the FUNNEL feeds it a real score."""
+
+
+def test_the_funnel_withholds_an_ungrounded_verdict(monkeypatch):
+    """The grounding branch must be reachable THROUGH the funnel, not just in a unit test.
+
+    `test_grounding_is_measured_not_asserted` calls `estimate_grounding` directly with
+    hand-written strings — it proves a function. The funnel is a different question, and the
+    answer was that `build_stub_verdict` embeds `references[0]` in its own f-string, so the
+    grounding it computes on itself is 1.0 for every input and `policy.py`'s threshold branch
+    is STILL unreachable in the only path that runs it. The tautology moved up one level; it
+    did not die.
+
+    So: make the stub cite regulation that was never retrieved, and require the funnel to
+    withhold.
+    """
+    import ml.serving.stream_service as svc
+
+    original = svc.build_stub_verdict  # capture BEFORE patching, or the stub calls itself
+
+    def _ungrounded(scored, references=svc.STUB_REFERENCES):
+        verdict, context = original(scored, references)
+        verdict["reasoning"] = "Under PSD2 Article 999 the issuer must decline this transaction."
+        return verdict, context
+
+    monkeypatch.setattr(svc, "build_stub_verdict", _ungrounded)
+
+    sink = MemorySink()
+    m = ServingMetrics(registry=CollectorRegistry())
+    result = svc.process_transaction(
+        _txn("t-ungrounded"),
+        CardHistoryStore(),
+        _AlwaysFlags(),
+        _FabricatesRegulation(),
+        m,
+        sink,
+    )
+
+    assert result["verdict_released"] is False, (
+        "a verdict citing regulation that was never retrieved reached the caller"
+    )
+    assert sink.records[0].grounding_score == 0.0
+    assert sink.records[0].released is False

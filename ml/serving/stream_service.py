@@ -29,7 +29,7 @@ from agents.bedrock.eval.decision_log import (
     record_decision,
     utc_now,
 )
-from agents.bedrock.eval.judge import VerdictContext, evaluate_verdict, provisions
+from agents.bedrock.eval.judge import VerdictContext, evaluate_verdict, provision_pairs
 from agents.bedrock.guardrails.policy import GuardrailPolicy
 from ml.features.adapter_stream import FeatureComputationError, compute_features
 from ml.serving.local_model import train_demo_scorer
@@ -182,26 +182,31 @@ def _record(
 
 
 def estimate_grounding(reasoning: str, references: tuple[str, ...]) -> float:
-    """A crude grounding score for the local funnel: how much of the claim is supported.
+    """A grounding score for the local funnel: 1.0 if every provision cited was retrieved.
 
-    `evaluate_output` was called with `grounding_score=1.0`, a hardcoded constant, so
-    `policy.py`'s `grounding_score < grounding_threshold` branch could NEVER fire. The
-    GROUNDING policy class was dead code in the only path that runs it, while the local
-    README advertised the guardrail as real.
+    Binary, deliberately, and that is the fix. It used to be the FRACTION of cited
+    provisions the context contained, which a verdict defeats by dilution:
 
-    This is deliberately simple and deliberately not 1.0: it is the fraction of the
-    verdict's cited provisions that the retrieved context actually contains. In AWS this
-    number comes from Bedrock's contextual-grounding filter; here it at least varies with
-    the input, so the threshold is a live control rather than an unreachable branch.
+        "Per PSD2 Art. 97, AMLD5 Art. 13, EBA GL 2021/03 and the fabricated Art. 999"
+        -> 3 of 4 grounded -> 0.75 -> PASSES a 0.75 threshold
+
+    Name enough real regulation and an invented article rides through on the average. A
+    proportion is the wrong measure: one fabricated provision is disqualifying, exactly as
+    the verdict gate treats it (set difference, any -> reject). Bedrock's contextual-grounding
+    filter returns a continuous score over the whole claim; this is not that, and does not
+    pretend to be — it is a deterministic stand-in for the one property that matters offline.
+
+    Before this it was worse: `evaluate_output(..., grounding_score=1.0)`, a literal, so
+    `policy.py`'s threshold branch could never fire at all.
     """
-    cited = provisions(reasoning)
+    cited = provision_pairs(reasoning)
     if not cited:
-        # Reasoning that cites nothing is not grounded in anything.
+        # Reasoning that cites nothing is grounded in nothing.
         return 0.0
-    available: set[str] = set()
+    available: set[tuple[str, str]] = set()
     for ref in references:
-        available |= provisions(ref)
-    return len(cited & available) / len(cited)
+        available |= provision_pairs(ref)
+    return 1.0 if cited <= available else 0.0
 
 
 def process_transaction(

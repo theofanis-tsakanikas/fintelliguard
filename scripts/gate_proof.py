@@ -519,9 +519,9 @@ ATTACKS: tuple[Attack, ...] = (
         ),
         path="ml/serving/stream_service.py",
         old=(
-            "    cited = provisions(reasoning)\n"
+            "    cited = provision_pairs(reasoning)\n"
             "    if not cited:\n"
-            "        # Reasoning that cites nothing is not grounded in anything.\n"
+            "        # Reasoning that cites nothing is grounded in nothing.\n"
             "        return 0.0"
         ),
         new="    return 1.0",
@@ -669,6 +669,19 @@ ATTACKS: tuple[Attack, ...] = (
         new='Permission   = ["aoss:*"]',
         gate="tests/agents/bedrock/test_knowledge_base_security.py",
         must_fail="test_the_kb_role_holds_only_the_permissions_ingestion_needs",
+    ),
+    Attack(
+        name="invariant-covered-in-name-only",
+        rationale=(
+            "The coverage test did the OPPOSITE of its purpose: it flagged only invariants "
+            "FALSE on every row, which another test already catches harder. A trivially-true "
+            "invariant — the thing it claimed to catch — passed silently."
+        ),
+        path="ml/features/semantics.py",
+        old="        at_boundary=lambda f: f.txn_velocity_1h == MIN_WINDOW_COUNT,",
+        new="        at_boundary=lambda f: False,",
+        gate="tests/features/test_parity_distributional.py",
+        must_fail="test_every_invariant_is_exercised_by_this_corpus",
     ),
     # --- the feature contract ------------------------------------------------ #
     Attack(

@@ -192,9 +192,27 @@ def _training_group(pdf: pd.DataFrame) -> pd.DataFrame:
         row["is_fraud"] = int(record["isFraud"])
         out.append(row)
 
-        seen.append((now, _finite(record.get("TransactionAmt")), _finite(record.get("addr2"))))
+        # `_usable` for addr2, `_finite` for the amount. addr2 is a CODE, not a quantity:
+        # numeric in real IEEE-CIS, but coercing it to float drops any non-numeric country
+        # code silently, so `modal_addr2` came out None and `country_mismatch` was False on
+        # every row. The same coercion bug the adapter had, in the caller — found by routing
+        # the parity test through this function instead of a context the test invented.
+        seen.append((now, _finite(record.get("TransactionAmt")), _usable(record.get("addr2"))))
 
     return pd.DataFrame(out, columns=[PRIMARY_KEY, LOOKUP_KEY, *FEATURE_NAMES, "is_fraud"])
+
+
+def _usable(value: object) -> object | None:
+    """The value, or None when it is missing. Only NaN is missing.
+
+    Unlike `_finite`, this does not coerce: `addr2` is a country code, and turning it into a
+    float makes every non-numeric code vanish.
+    """
+    if value is None:
+        return None
+    if isinstance(value, float) and value != value:  # NaN != NaN
+        return None
+    return value
 
 
 def _finite(value: object) -> float | None:

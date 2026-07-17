@@ -47,11 +47,19 @@ class Invariant:
 
     `why` is not decoration. It is the reason the invariant survives the next person who
     finds it inconvenient — it names the skew that motivated it.
+
+    `at_boundary` is what makes the invariant testable. An invariant that must ALWAYS hold
+    has no rows on its false side, so "does the corpus contain both outcomes?" is the wrong
+    question — the right one is "does the corpus ever reach the EDGE?". A corpus where
+    `txn_velocity_1h` is never 1 cannot tell a floor of 1 from a floor of 0, and the
+    invariant is decoration. `test_every_invariant_is_exercised_by_this_corpus` asserts the
+    corpus touches every edge.
     """
 
     name: str
     holds: Callable[[FeatureVector], bool]
     why: str
+    at_boundary: Callable[[FeatureVector], bool]
 
     def check(self, features: FeatureVector) -> str | None:
         return None if self.holds(features) else f"{self.name}: {self.why}"
@@ -64,16 +72,19 @@ INVARIANTS: tuple[Invariant, ...] = (
         "the current transaction is in its own 1h window, so the count is never 0 — "
         "IEEE emitted int(C1) with a floor of 0 while the stream emitted len(prior)+1, "
         "shifting every learned split by one",
+        at_boundary=lambda f: f.txn_velocity_1h == MIN_WINDOW_COUNT,
     ),
     Invariant(
         "velocity_24h_counts_current",
         lambda f: f.txn_velocity_24h >= MIN_WINDOW_COUNT,
         "same window convention as 1h",
+        at_boundary=lambda f: f.txn_velocity_24h == MIN_WINDOW_COUNT,
     ),
     Invariant(
         "velocity_24h_dominates_1h",
         lambda f: f.txn_velocity_24h >= f.txn_velocity_1h,
         "the 24h window contains the 1h window",
+        at_boundary=lambda f: f.txn_velocity_24h == f.txn_velocity_1h,
     ),
     Invariant(
         "amount_sum_1h_includes_current",
@@ -81,21 +92,25 @@ INVARIANTS: tuple[Invariant, ...] = (
         "the 1h amount window contains the current amount, so the sum can never be less "
         "than it — IEEE's C1*amount proxy emitted 0.0 for a 120.0 transaction, a state "
         "the serving path cannot produce",
+        at_boundary=lambda f: f.amount_sum_1h == f.amount_usd,
     ),
     Invariant(
         "distinct_merchants_counts_current",
         lambda f: f.distinct_merchants_24h >= MIN_WINDOW_COUNT,
         "the current merchant is one of the distinct merchants in the window",
+        at_boundary=lambda f: f.distinct_merchants_24h == MIN_WINDOW_COUNT,
     ),
     Invariant(
         "device_txn_count_counts_current",
         lambda f: f.device_txn_count_24h >= MIN_WINDOW_COUNT,
         "the current transaction used the current device",
+        at_boundary=lambda f: f.device_txn_count_24h == MIN_WINDOW_COUNT,
     ),
     Invariant(
         "distinct_countries_counts_current",
         lambda f: f.distinct_countries_24h >= MIN_WINDOW_COUNT,
         "the current transaction has a country",
+        at_boundary=lambda f: f.distinct_countries_24h == MIN_WINDOW_COUNT,
     ),
 )
 

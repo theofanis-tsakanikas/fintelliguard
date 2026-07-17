@@ -1,9 +1,7 @@
 """Raw-PII detection must catch card numbers and not catch arithmetic.
 
 The pattern was written out three times — the guardrail policy, the verdict gate, the
-decision log — and every copy did this:
-
-    r"\b(?:\d[ -]?){13,19}\b"
+decision log — and every copy used a bare word-boundary regex around a 13-to-19 digit run.
 
 `\b` is a word boundary, and `.` is a non-word character, so the boundary sits happily
 between `3.` and `9318256327243257`. The mantissa of a float is sixteen consecutive digits.
@@ -16,9 +14,12 @@ is not a stricter control, it is a broken one.
 
 from __future__ import annotations
 
+import random
+import re
+
 import pytest
 
-from agents.bedrock.pii import contains_pii, found_pii
+from agents.bedrock.pii import _CARD_CANDIDATE, _luhn_valid, contains_pii, found_pii
 
 # Chosen BECAUSE its corpus contains UUIDs whose digit runs pass Luhn — the exact case the
 # grouping rule exists to reject. See `test_the_uuid_corpus_actually_contains_the_phenomenon`.
@@ -94,15 +95,57 @@ def test_a_uuid_is_not_a_card_number():
     )
 
 
-def test_no_uuid_is_ever_a_card_number():
-    """The property, not one example: a flaky detector needs more than one draw to catch."""
-    import uuid
+def _uuid_like(rng: random.Random) -> str:
+    """A UUID-shaped hex string from a SEEDED generator.
 
-    offenders = [
-        str(u) for _ in range(3000) if contains_pii(f"decision {(u := uuid.uuid4())} recorded")
-    ]
+    `uuid.uuid4()` reads os.urandom and cannot be seeded, so a property test over it is a
+    coin flip: the ~2-in-20,000 false positives appear on some runs and not others. A
+    probabilistic gate is not a gate — `gate_proof` caught exactly that, reporting the
+    attack as failing "for an unrelated reason" on the runs where the flake did not fire.
+    """
+    return "-".join(
+        "".join(rng.choice("0123456789abcdef") for _ in range(n)) for n in (8, 4, 4, 4, 12)
+    )
+
+
+def _uuid_corpus(seed: int = _UUID_CORPUS_SEED, n: int = 20_000) -> list[str]:
+    rng = random.Random(seed)
+    return [_uuid_like(rng) for _ in range(n)]
+
+
+def test_no_uuid_is_ever_a_card_number():
+    """A generated correlation id must never be mistaken for PII.
+
+    `9e988812-2850-4531-8c49-...` contains `988812-2850-4531-8` — fifteen digits with
+    hyphens — and ~10% of such runs pass Luhn, so the audit log refused roughly one decision
+    in ten thousand, at random. It presented as a flaky test.
+    """
+    corpus = _uuid_corpus()
+    offenders = [u for u in corpus if contains_pii(f"decision {u} recorded")]
     assert not offenders, (
-        f"{len(offenders)}/3000 correlation ids read as card numbers: {offenders[:3]}"
+        f"{len(offenders)}/{len(corpus)} correlation ids read as card numbers: {offenders[:3]}"
+    )
+
+
+def test_the_uuid_corpus_actually_contains_the_phenomenon():
+    """The corpus must hold UUIDs that WOULD be misread without the grouping rule.
+
+    The first seed chosen yielded zero such UUIDs in 20,000 draws, so the test above passed
+    whether or not the rule existed — coverage theatre. `gate_proof` caught it by reporting
+    the attack as failing "for an unrelated reason". A corpus that does not contain the
+    phenomenon proves nothing about the control that handles it, which is the same
+    self-deception as a gate nobody has attacked.
+    """
+    would_leak = [
+        u
+        for u in _uuid_corpus()
+        for m in _CARD_CANDIDATE.finditer(f"decision {u} recorded")
+        if _luhn_valid(re.sub(r"[ -]", "", m.group(0)))
+    ]
+    assert would_leak, (
+        f"seed {_UUID_CORPUS_SEED} yields no UUID whose digit run passes Luhn, so "
+        "test_no_uuid_is_ever_a_card_number cannot detect the grouping rule being removed. "
+        "Pick a seed whose corpus contains the case."
     )
 
 
