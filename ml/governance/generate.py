@@ -5,7 +5,7 @@ transactions). This module renders the technical documentation a regulator expec
 **from the code**, not from hand-written prose, so it can never drift from what actually
 ships:
 
-* ``docs/governance/MODEL_CARD.md``        — the XGBoost scorer: intended use, the 15
+* ``docs/governance/MODEL_CARD.md``        — the XGBoost scorer: intended use, the canonical
   features and ranges, decision bands, the promotion gate, explainability, limitations.
 * ``docs/governance/DATASET_CARD.md``      — training data provenance, schema, PII handling.
 * ``docs/governance/GUARDRAIL_COVERAGE.md`` — the red-team coverage report (live number).
@@ -69,7 +69,7 @@ def render_model_card() -> str:
         "- **Role in the system:** scores 100% of transactions; the ~1% above the review "
         "threshold are escalated to the Tier-2 Bedrock compliance agent.",
         "",
-        "## Inputs — the canonical 15 features",
+        f"## Inputs — the canonical {len(FEATURE_SPECS)} features",
         "",
         "Both adapters (stream + IEEE-CIS) must produce exactly this schema; parity is enforced "
         "by test. Ranges are the DLT validation gates.",
@@ -124,8 +124,8 @@ def render_dataset_card() -> str:
         "",
         "## Sources",
         "",
-        "- **IEEE-CIS Fraud Detection** (public benchmark) — adapted to the canonical 15-feature "
-        "schema.",
+        f"- **IEEE-CIS Fraud Detection** (public benchmark) — adapted to the canonical "
+        f"{len(FEATURE_SPECS)}-feature schema.",
         "- **Synthetic transaction stream** — the simulator (`simulator/`), ~500 txns/s, with "
         "injected fraud archetypes; adapted by `ml/features/adapter_stream.py`.",
         "",
@@ -277,7 +277,8 @@ def render_ai_act() -> str:
         "because this document previously implied otherwise.",
         "- **Decision records** (`agents/bedrock/eval/decision_log.py`): every scored "
         "transaction — not only the flagged ones — writes one replayable record: input keys "
-        "→ the 15 features → `model_version`, score and `top_features` → the verdict, the "
+        f"→ the {len(FEATURE_SPECS)} features → `model_version`, score and `top_features` → "
+        "the verdict, the "
         "gate result and the guardrail outcome, under a correlation id. The record refuses "
         "to be written if it would carry raw PII. The sink is injected, so retention and "
         "immutability are a deployment decision (S3 Object Lock / a Delta table with an "

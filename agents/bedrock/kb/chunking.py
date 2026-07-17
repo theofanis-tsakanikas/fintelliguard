@@ -144,6 +144,18 @@ def screen_document(text: str, policy: GuardrailPolicy | None = None) -> str | N
     Screening at ingestion, not at retrieval, is deliberate: a poisoned chunk that reaches
     the index is one a future retrieval can surface, and the cheapest place to refuse it is
     before it is embedded.
+
+    **What this does NOT close.** `evaluate_input` is the OFFLINE signature model of the
+    Bedrock guardrail — a curated regex set, not a classifier. It refuses the literal
+    injection phrasings it models ("ignore all previous instructions", "disregard the
+    above", ...); it does NOT catch a paraphrase ("set aside the earlier guidance"), a
+    polite override, another language, or an indirect-authority framing. So this screen
+    raises the cost of the naive attack and documents the trust boundary in code — it is not
+    a semantic injection detector, and the enforceable control on the live path remains
+    Bedrock Guardrails' PROMPT_ATTACK policy at inference (`guardrail.tf`), which sees the
+    retrieved chunk again at verdict time. The evasions that pass this screen are pinned in
+    `tests/agents/bedrock/test_chunking.py::test_known_injection_evasions_pass_the_offline_screen`
+    so the boundary of the claim is executable, not discovered. Silence is not coverage.
     """
     policy = policy or GuardrailPolicy()
     decision = policy.evaluate_input(text)

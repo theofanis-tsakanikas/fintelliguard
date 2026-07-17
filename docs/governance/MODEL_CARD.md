@@ -9,7 +9,7 @@
 - **Output contract:** `fraud_score`, `model_version`, `threshold`, `decision_hint`, `top_features` (per-prediction TreeSHAP contributions).
 - **Role in the system:** scores 100% of transactions; the ~1% above the review threshold are escalated to the Tier-2 Bedrock compliance agent.
 
-## Inputs — the canonical 15 features
+## Inputs — the canonical 14 features
 
 Both adapters (stream + IEEE-CIS) must produce exactly this schema; parity is enforced by test. Ranges are the DLT validation gates.
 

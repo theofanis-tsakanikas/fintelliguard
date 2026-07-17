@@ -4,7 +4,7 @@
 
 ## Sources
 
-- **IEEE-CIS Fraud Detection** (public benchmark) — adapted to the canonical 15-feature schema.
+- **IEEE-CIS Fraud Detection** (public benchmark) — adapted to the canonical 14-feature schema.
 - **Synthetic transaction stream** — the simulator (`simulator/`), ~500 txns/s, with injected fraud archetypes; adapted by `ml/features/adapter_stream.py`.
 
 ## Schema & parity

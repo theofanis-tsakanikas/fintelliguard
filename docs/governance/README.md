@@ -16,7 +16,7 @@ Observability & drift · Governance as code).
 
 ## Generated artifacts (do not edit by hand — `make govern-docs`)
 
-- [MODEL_CARD.md](MODEL_CARD.md) — the XGBoost scorer: 15 features + ranges, decision bands, promotion gate, explainability, limitations, monitoring.
+- [MODEL_CARD.md](MODEL_CARD.md) — the XGBoost scorer: the canonical features + ranges, decision bands, promotion gate, explainability, limitations, monitoring.
 - [DATASET_CARD.md](DATASET_CARD.md) — data provenance, schema/parity, PII handling.
 - [GUARDRAIL_COVERAGE.md](GUARDRAIL_COVERAGE.md) — the live red-team coverage report.
 - [AI_ACT_ANNEX_IV.md](AI_ACT_ANNEX_IV.md) — Annex IV technical documentation tying the controls together (high-risk classification, human oversight, post-market monitoring).

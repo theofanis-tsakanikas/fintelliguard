@@ -73,8 +73,12 @@ def _realtime_group(pdf: pd.DataFrame) -> pd.DataFrame:
     """Per-card: replay events in time order through `compute_features` (no leakage).
 
     A row whose features cannot be computed is emitted with NULL features rather than
-    dropped, so the existing `no_null_features` gate routes it to the quarantine table with
-    a reason. It used to be appended to a local `quarantined` list that was never read —
+    dropped, so a Gold gate routes it to the quarantine table with a reason. In practice the
+    reason a human reads is the FIRST gate whose SQL is non-true on the nulls —
+    `amount_in_range` (a NULL `amount_usd` is not `> 0`) — and `no_null_features` is the
+    backstop that guarantees the routing even if every range gate somehow passed. The point
+    is that the row is quarantined with evidence, not that any single gate name catches it.
+    It used to be appended to a local `quarantined` list that was never read —
     the row vanished with no counter, no log and no table, while three docstrings and this
     module's header promised "routes failures to quarantine … never dropping silently".
     Collecting evidence and discarding it is worse than not collecting it: it reads as a
@@ -115,8 +119,10 @@ def _realtime_group(pdf: pd.DataFrame) -> pd.DataFrame:
 def _unfeaturisable_row(current: dict) -> dict:
     """Keys, and nulls where the features would have been.
 
-    `no_null_features` then quarantines it with a reason a human can read, on the table
-    that already exists for the purpose — instead of the row disappearing.
+    A Gold gate then quarantines it with a reason a human can read, on the table that already
+    exists for the purpose — instead of the row disappearing. The reason will be the first
+    gate the nulls fail (`amount_in_range`), with `no_null_features` as the backstop; either
+    way the row is routed, not dropped.
     """
     return {
         PRIMARY_KEY: str(current.get("transaction_id")),

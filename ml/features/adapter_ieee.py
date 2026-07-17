@@ -134,11 +134,12 @@ def map_row(row: Mapping[str, Any], context: CardContext | None = None) -> Featu
 
     # Geography: addr2 is the billing country code; mismatch vs the card's modal addr2.
     #
-    # `_finite`, not `is not None`. `float('nan') is not None` is True and `nan != 87.0` is
-    # also True, so a NaN addr2 forced country_mismatch=True — and `silver_transforms` casts
-    # addr2 with no `coalesce`, unlike every other numeric column, while addr2 is missing in
-    # ~12% of real IEEE-CIS rows. That is ~12% of training rows carrying a spurious True on
-    # one of the strongest features in the label.
+    # `_usable`, not a bare `is not None`. `float('nan') is not None` is True and `nan != 87.0`
+    # is also True, so a NaN addr2 forced country_mismatch=True on ~12% of real IEEE-CIS rows —
+    # one of the strongest features in the label. `_usable` collapses both NULL and NaN to a
+    # single missing sentinel (None), and `silver_transforms` now normalises a missing addr2 to
+    # NULL (not a `-1.0` that would read as a present, mismatching country code), so the two
+    # sides agree on exactly one representation of "we do not know the billing country".
     addr2 = _usable(row.get("addr2"))
     country_mismatch = (
         transforms.values_differ(addr2, ctx.modal_addr2) if addr2 is not None else False

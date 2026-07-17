@@ -37,7 +37,7 @@ FintelliGuard scores card transactions for fraud and produces documented, regula
 ## 7. Post-market monitoring
 
 - **Drift detection** (`ml/monitoring/drift.py`): PSI per feature, alert at ≥ 0.25 (+ two-sample KS). **Scope:** this is a library and a threshold, not a running monitor — no job computes drift on a schedule, no reference snapshot is persisted, and no alert sink is wired. Stated plainly because this document previously implied otherwise.
-- **Decision records** (`agents/bedrock/eval/decision_log.py`): every scored transaction — not only the flagged ones — writes one replayable record: input keys → the 15 features → `model_version`, score and `top_features` → the verdict, the gate result and the guardrail outcome, under a correlation id. The record refuses to be written if it would carry raw PII. The sink is injected, so retention and immutability are a deployment decision (S3 Object Lock / a Delta table with an audit grant); the local funnel writes append-only JSONL, which has the same contract and none of the guarantees.
+- **Decision records** (`agents/bedrock/eval/decision_log.py`): every scored transaction — not only the flagged ones — writes one replayable record: input keys → the 14 features → `model_version`, score and `top_features` → the verdict, the gate result and the guardrail outcome, under a correlation id. The record refuses to be written if it would carry raw PII. The sink is injected, so retention and immutability are a deployment decision (S3 Object Lock / a Delta table with an audit grant); the local funnel writes append-only JSONL, which has the same contract and none of the guarantees.
 
 ## 8. Record-keeping
 

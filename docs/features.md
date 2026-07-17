@@ -1,4 +1,4 @@
-# The 15 Gold Features
+# The 14 Gold Features
 
 > Source of truth for the FintelliGuard fraud model feature set.
 > Any change here requires a simultaneous update to `ml/training/` and `ml/features/` (feature parity rule).
@@ -7,10 +7,10 @@
 
 ## Design principles
 
-1. **Semantic, not raw.** Features are defined by *what they mean*, not which column they come from. Each data source (simulator stream / IEEE-CIS) has its own adapter that produces these 15.
+1. **Semantic, not raw.** Features are defined by *what they mean*, not which column they come from. Each data source (simulator stream / IEEE-CIS) has its own adapter that produces these 14.
 2. **Computable in real time.** Each feature must be computable with a <5ms online Feature Store lookup. No features requiring full-table scans.
 3. **Explainable.** Each feature must be explainable to a compliance analyst in one sentence. The Bedrock Agent uses feature importance for the verdict — so features must make sense to a human.
-4. **Quality over quantity.** 15 good features, not 200. Each one justifies its existence.
+4. **Quality over quantity.** 14 good features, not 200. Each one justifies its existence — one that could not be computed honestly was removed, not faked (see below).
 
 ---
 
@@ -28,16 +28,16 @@ The two data sources have fundamentally different schemas:
 | Geography | `ip_country` | `addr1`, `addr2`, `dist1`, `dist2` |
 | Anonymous | — | `V1`–`V339` (Vesta engineered) |
 
-**The solution:** two adapters that produce the same 15 semantic features.
+**The solution:** two adapters that produce the same 14 semantic features.
 
-- `ml/features/adapter_stream.py` — computes the 15 from raw stream events via Spark window functions.
-- `ml/features/adapter_ieee.py` — maps IEEE-CIS columns to the same 15.
+- `ml/features/adapter_stream.py` — computes the 14 from raw stream events via Spark window functions.
+- `ml/features/adapter_ieee.py` — maps IEEE-CIS columns to the same 14.
 
-**Honest caveat:** not all mappings are perfect 1:1. Where IEEE-CIS has no direct equivalent (e.g. `merchant_risk_score`), we use a proxy and document it in the "IEEE-CIS mapping" column below. This is acceptable — what is **not** acceptable is training on one feature set and serving another without knowing it.
+**Honest caveat:** not all mappings are perfect 1:1. Where IEEE-CIS has no direct equivalent (e.g. `amount_zscore`, computed against the `card1` group mean), we use a proxy and document it in the "IEEE-CIS mapping" column below. This is acceptable — what is **not** acceptable is training on one feature set and serving another without knowing it. The one feature that could not be proxied *honestly on either side* (`merchant_risk_score`) was removed rather than approximated — see the tombstone below.
 
 ---
 
-## The 15 features
+## The 14 features
 
 ### Amount (3)
 
@@ -71,24 +71,33 @@ The two data sources have fundamentally different schemas:
 | 11 | `country_mismatch` | bool | IP country differs from the card's usual | compare `ip_country` vs modal country | Derived: `addr2` vs modal `addr2` per card |
 | 12 | `distinct_countries_24h` | int | Distinct countries for the card in 24h | window approx_count_distinct | Proxy: `dist1` bucketed |
 
-### Merchant (2)
+### Merchant (1)
 
 | # | Feature | Type | Definition | Stream computation | IEEE-CIS mapping |
 |---|---|---|---|---|---|
-| 13 | `merchant_risk_score` | float (0-1) | Historical fraud rate of the merchant | lookup in merchant risk table (Gold) | Proxy: fraud rate per `ProductCD` |
-| 14 | `mcc_risk_tier` | int (1-5) | Risk tier of the merchant category | lookup in MCC risk map | Proxy: tier per `ProductCD` |
+| 13 | `mcc_risk_tier` | int (1-5) | Risk tier of the merchant category | lookup in MCC risk map | Proxy: tier per `ProductCD` |
 
 ### Temporal (1)
 
 | # | Feature | Type | Definition | Stream computation | IEEE-CIS mapping |
 |---|---|---|---|---|---|
-| 15 | `is_unusual_hour` | bool | Transaction at an unusual hour for the card | hour vs card's modal active hours | Derived from `TransactionDT` hour |
+| 14 | `is_unusual_hour` | bool | Transaction at an unusual hour for the card | hour vs card's modal active hours | Derived from `TransactionDT` hour |
+
+> **Removed: `merchant_risk_score`.** It was a target-encoded feature — the merchant's
+> historical fraud *rate* — which needs merchant identity AND labels in the same dataset to
+> compute. IEEE-CIS has labels but no merchant identity; the stream has merchants but no
+> labels. Neither adapter could compute it honestly, so the training side hardcoded `0.0`
+> and the serving side a proxy: the model would have learned a constant, then been served a
+> distribution it never saw. It was deleted rather than faked (15 → 14 features). The
+> canonical count is derived from `len(FEATURE_SPECS)` in `ml/features/schema.py`, and the
+> generated model/dataset cards render that number — see the tombstone comments in
+> `schema.py`, `adapter_ieee.py`, and `adapter_stream.py`.
 
 ---
 
 ## State management (critical for the streaming path)
 
-Features 3, 8, 9, 11, 15 require **per-card historical state** (e.g. historical mean amount, first seen, usual country). This does not exist in a raw stream event.
+Features 3, 8, 9, 11, 14 require **per-card historical state** (e.g. historical mean amount, first seen, usual country). This does not exist in a raw stream event.
 
 **Designed solution:** Spark Structured Streaming with stateful aggregation (`flatMapGroupsWithState`) + checkpointing — per-card state in a state store, updated per event, exactly-once across restarts. Features 4, 5, 6, 7, 10, 12 would be sliding-window aggregations with watermarking for late events.
 
@@ -111,7 +120,6 @@ fintelliguard.features.txn_features (online + offline)
   ├── card_age_days, device_txn_count_24h             (int)
   ├── device_seen_before, country_mismatch            (bool)
   ├── distinct_countries_24h                           (int)
-  ├── merchant_risk_score                              (float)
   ├── mcc_risk_tier                                    (int)
   └── is_unusual_hour                                  (bool)
 ```
@@ -127,7 +135,6 @@ In Silver→Gold, each feature passes DLT expectations defined in `pipelines/gol
 
 - `amount_usd` > 0 and < 1,000,000 (outlier guard)
 - `txn_velocity_1h` ≥ 0, `txn_velocity_24h` ≥ `txn_velocity_1h`
-- `merchant_risk_score` ∈ [0, 1]
 - `mcc_risk_tier` ∈ {1,2,3,4,5}
 - No feature is null (impute or drop in Silver)
 

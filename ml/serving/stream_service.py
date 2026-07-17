@@ -22,6 +22,7 @@ from pathlib import Path
 from time import perf_counter
 
 from agents.bedrock.eval.decision_log import (
+    DecisionLogError,
     DecisionRecord,
     DecisionSink,
     JsonlSink,
@@ -151,32 +152,31 @@ def _record(
     reason to stop scoring. Same for a sink that throws: a full disk must not take payments
     down.
     """
+    # Built OUTSIDE the try. A KeyError or TypeError here — `scored` missing a key, a bad
+    # `tier2` — is a PROGRAMMING bug, and it must be loud, not swallowed and miscounted as a
+    # compliance refusal. The try wraps only the things that legitimately fail at runtime on
+    # a healthy build: the PII refusal (DecisionLogError) and a broken sink (OSError).
+    entry = DecisionRecord(
+        decision_id=decision_id,
+        transaction_id=record.transaction_id,
+        card_hash=record.card_hash,
+        recorded_at=utc_now(),
+        # The field every consumer used to drop. Without it no past decision can be tied to
+        # the model that made it.
+        model_version=str(scored["model_version"]),
+        features=record.features.as_dict(),
+        fraud_score=float(scored["fraud_score"]),
+        decision_hint=str(scored["decision_hint"]),
+        top_features=tuple(f["name"] for f in scored["top_features"]),
+        **tier2,
+    )
     try:
-        record_decision(
-            decisions,
-            DecisionRecord(
-                decision_id=decision_id,
-                transaction_id=record.transaction_id,
-                card_hash=record.card_hash,
-                recorded_at=utc_now(),
-                # The field every consumer used to drop. Without it no past decision can be
-                # tied to the model that made it.
-                model_version=str(scored["model_version"]),
-                features=record.features.as_dict(),
-                fraud_score=float(scored["fraud_score"]),
-                decision_hint=str(scored["decision_hint"]),
-                top_features=tuple(f["name"] for f in scored["top_features"]),
-                **tier2,
-            ),
-        )
-    except Exception:  # noqa: BLE001 - nothing here may take the payment path down
-        # ONE clause on purpose. `DecisionLogError` (the PII refusal) and a broken sink
-        # (full disk, EACCES) have the same correct handling — count it, page someone, keep
-        # scoring — and two clauses meant a mutation could disable one while the other
-        # silently caught it, which is a gate that cannot be attacked.
-        #
-        # Loud, counted, survivable. An unrecorded decision is a compliance failure and must
-        # page someone; it is not a reason to stop scoring the next transaction.
+        record_decision(decisions, entry)
+    except (DecisionLogError, OSError):
+        # The PII refusal and a failed write have the same correct handling: count it, page
+        # someone, keep scoring. An unrecorded decision is a compliance failure and must be
+        # visible; it is not a reason to stop scoring the next transaction. A programming
+        # error is NOT caught here — it belongs in a test failure, not a metric.
         metrics.record_decision_log_refusal()
         logger.exception("decision %s was not recorded", decision_id)
 

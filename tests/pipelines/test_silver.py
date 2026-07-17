@@ -62,3 +62,46 @@ def test_cleanse_ieee_imputes_null_proxy_columns(spark):
     cleaned = cleanse_ieee(spark.createDataFrame(rows, _IEEE_SCHEMA))
     row = select_valid(cleaned).collect()[0]
     assert row["C1"] == 0.0 and row["D1"] == 0.0 and row["dist1"] == 0.0  # imputed
+
+
+def test_cleanse_ieee_maps_missing_addr2_to_null_not_a_sentinel(spark):
+    """Missing addr2 (NULL or NaN) must survive Silver as NULL, never a `-1.0` sentinel.
+
+    A sentinel is a *present* country code: `_usable` downstream would not filter it, so on a
+    card mixing real and missing addr2 the missing rows would compare unequal to the card's
+    modal country and produce a spurious `country_mismatch = True`. NULL is the one honest
+    "we do not know the billing country" value the adapter and Gold both collapse to False.
+    """
+    rows = [
+        (10, 3000, 80.0, 1.0, 1.0, 1.0, 1.0, 0.0, None, 0.0, "W", 100.0, 0),
+        (11, 3000, 80.0, 1.0, 1.0, 1.0, 1.0, 0.0, float("nan"), 0.0, "W", 200.0, 0),
+        (12, 3000, 80.0, 1.0, 1.0, 1.0, 1.0, 0.0, 87.0, 0.0, "W", 300.0, 0),
+    ]
+    cleaned = cleanse_ieee(spark.createDataFrame(rows, _IEEE_SCHEMA))
+    addr2 = {r["TransactionID"]: r["addr2"] for r in select_valid(cleaned).collect()}
+    assert addr2["10"] is None  # source NULL stays NULL
+    assert addr2["11"] is None  # NaN normalised to NULL, not -1.0
+    assert addr2["12"] == 87.0  # a real code is untouched
+
+
+def test_missing_addr2_does_not_flag_country_mismatch_end_to_end(spark):
+    """The Silver->Gold composition: a missing addr2 row on a mixed card is not a mismatch.
+
+    This is the regression the two independent fixes (Silver's NaN guard, the adapter's
+    `_usable`) once defeated each other on — the `-1.0` sentinel made `country_mismatch`
+    spuriously True here. Drive real Silver output through the real `_training_group`.
+    """
+    from pipelines.gold.gold_transforms import _training_group
+
+    rows = [
+        (20, 4000, 80.0, 1.0, 1.0, 1.0, 1.0, 0.0, 87.0, 0.0, "W", 100.0, 0),  # real addr2
+        (21, 4000, 80.0, 1.0, 1.0, 1.0, 1.0, 0.0, float("nan"), 0.0, "W", 200.0, 0),  # missing
+        (22, 4000, 80.0, 1.0, 1.0, 1.0, 1.0, 0.0, 87.0, 0.0, "W", 300.0, 0),  # real addr2
+    ]
+    cleaned = select_valid(cleanse_ieee(spark.createDataFrame(rows, _IEEE_SCHEMA)))
+    pdf = cleaned.toPandas().sort_values("TransactionDT")
+
+    produced = _training_group(pdf).set_index("transaction_id")
+    # The missing-addr2 row must NOT be flagged as a country mismatch: you cannot mismatch a
+    # country you do not know.
+    assert bool(produced.loc["21", "country_mismatch"]) is False

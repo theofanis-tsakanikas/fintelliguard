@@ -372,3 +372,37 @@ def test_the_funnel_withholds_an_ungrounded_verdict(monkeypatch):
     )
     assert sink.records[0].grounding_score == 0.0
     assert sink.records[0].released is False
+
+
+def test_a_programming_error_in_the_record_is_not_swallowed_as_a_refusal(scorer):
+    """A KeyError building the record is a bug, not a compliance refusal.
+
+    `_record` used to catch bare `Exception`, so a missing `scored` key would be swallowed
+    and miscounted as a decision-log refusal — a programming error hidden behind a metric.
+    The record is built OUTSIDE the try now; only the write is wrapped.
+    """
+    import ml.serving.stream_service as svc
+
+    # A scorer whose output is missing `model_version` — a contract bug, not a runtime PII
+    # refusal. It must propagate, not be counted as a refusal.
+    class _BrokenScorer:
+        class config:  # noqa: N801
+            model_version = "v"
+
+        def score(self, features):
+            return {
+                "fraud_score": 0.1,
+                "threshold": 0.7,
+                "decision_hint": "allow",
+                "top_features": [],
+            }
+
+    with pytest.raises(KeyError, match="model_version"):
+        svc.process_transaction(
+            _txn("t-bug"),
+            CardHistoryStore(),
+            _BrokenScorer(),
+            GuardrailPolicy(),
+            ServingMetrics(registry=CollectorRegistry()),
+            MemorySink(),
+        )

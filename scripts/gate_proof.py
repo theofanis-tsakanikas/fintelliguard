@@ -57,6 +57,10 @@ COPY = (
     "pyproject.toml",
     ".github",
     "infra",
+    # The committed regulated docs, so `ml.governance.generate --check` has something to
+    # diff against: the freshness gate only has teeth if a code mutation can make the staged
+    # docs go stale relative to the staged code.
+    "docs",
 )
 
 # Lines pytest prints on a CLEAN run too. A marker found on one of these is not a finding
@@ -380,7 +384,7 @@ ATTACKS: tuple[Attack, ...] = (
             "trigger condition for a security control was a payment-scoring outage."
         ),
         path="ml/serving/stream_service.py",
-        old="    except Exception:  # noqa: BLE001 - nothing here may take the payment path down",
+        old="    except (DecisionLogError, OSError):",
         new="    except _NeverRaisedError:",
         gate="tests/serving/test_local_runtime.py",
         must_fail="test_a_refused_decision_record_does_not_take_the_funnel_down",
@@ -534,8 +538,8 @@ ATTACKS: tuple[Attack, ...] = (
             "cannot be tied to its own outputs."
         ),
         path="ml/serving/stream_service.py",
-        old='                model_version=str(scored["model_version"]),',
-        new='                model_version="",',
+        old='        model_version=str(scored["model_version"]),',
+        new='        model_version="",',
         gate="tests/agents/bedrock/eval/test_decision_log.py",
         must_fail="test_the_record_carries_the_model_version_that_made_the_decision",
     ),
@@ -808,6 +812,21 @@ ATTACKS: tuple[Attack, ...] = (
         new="",
         gate="tests/agents/bedrock/guardrails/test_redteam_coverage.py",
         must_fail="test_full_block_rate_no_false_positives",
+    ),
+    Attack(
+        name="feature-count-drift-in-governance-doc",
+        rationale=(
+            "The EU-AI-Act / model-card feature count must be DERIVED from the schema, not a "
+            "prose literal the generator reproduces from itself. Drop a feature and the "
+            "committed regulated docs have to go stale — the count and the input table both "
+            "shrink — so `--check` fails CI instead of shipping a document that misstates the "
+            "number of model inputs."
+        ),
+        path="ml/features/schema.py",
+        old='    FeatureSpec("amount_log", float, minimum=0.0),',
+        new="",
+        gate="tests/ml/governance/test_generate.py",
+        must_fail="test_committed_docs_are_up_to_date",
     ),
 )
 

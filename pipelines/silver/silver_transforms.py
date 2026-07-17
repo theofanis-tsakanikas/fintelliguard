@@ -91,13 +91,18 @@ def cleanse_ieee(bronze: DataFrame) -> DataFrame:
         F.coalesce(F.col("C4").cast("double"), F.lit(0.0)).alias("C4"),
         F.coalesce(F.col("C6").cast("double"), F.lit(0.0)).alias("C6"),
         F.coalesce(F.col("D1").cast("double"), F.lit(0.0)).alias("D1"),
-        # `nanvl`, not a bare cast: every other numeric column here is guarded and this one
-        # was not. A NaN addr2 is not NULL, so it survived to the adapter, where
-        # `nan != modal_addr2` is True and `country_mismatch` came out spuriously True on
-        # ~12% of real IEEE-CIS rows — one of the strongest features in the label.
-        # `-1` is outside the ISO country-code range, so it reads as "unknown", and the
-        # adapter's modal comparison treats it as a value like any other.
-        F.nanvl(F.col("addr2").cast("double"), F.lit(-1.0)).alias("addr2"),
+        # NaN -> NULL, not NaN -> `-1.0`. A NaN addr2 is not NULL, so it once survived to the
+        # adapter, where `nan != modal_addr2` is True and `country_mismatch` came out
+        # spuriously True on ~12% of real IEEE-CIS rows — one of the strongest features in the
+        # label. The first fix filled it with `-1.0`, but that is a *present* value: on a card
+        # mixing real and missing addr2, the `-1.0` rows compared unequal to the card's modal
+        # country and the spurious True came straight back for the mixed case. `_usable`
+        # (adapter and Gold) already collapses NULL -> missing -> `country_mismatch = False`;
+        # the single honest missing representation is NULL, so normalise NaN to it here and let
+        # the one guard downstream do its job.
+        F.when(F.isnan(F.col("addr2").cast("double")), F.lit(None).cast("double"))
+        .otherwise(F.col("addr2").cast("double"))
+        .alias("addr2"),
         F.coalesce(F.col("dist1").cast("double"), F.lit(0.0)).alias("dist1"),
         F.col("ProductCD"),
         F.col("TransactionDT").cast("double").alias("TransactionDT"),
