@@ -80,6 +80,15 @@ class ServingMetrics:
             ["endpoint", "environment"],
             **common,
         )
+        # An unrecorded decision is a compliance failure (AI Act Art. 12), so it must be
+        # visible rather than swallowed — but it must not stop the funnel either. The
+        # refusal used to propagate out of the consumer loop and crash-loop the process.
+        self._log_refusals = Counter(
+            "fintelliguard_decision_log_refusals",
+            "Decisions that could not be written to the audit log (refused or sink failure).",
+            ["endpoint", "environment"],
+            **common,
+        )
         self._build.labels(ENDPOINT, environment, model_version).set(1)
 
     def observe_request(self, duration_seconds: float, decision: str) -> None:
@@ -96,6 +105,10 @@ class ServingMetrics:
 
     def record_guardrail_block(self, policy: str | None) -> None:
         self._guardrail.labels(ENDPOINT, self.environment, policy or "unknown").inc()
+
+    def record_decision_log_refusal(self) -> None:
+        """A decision the audit log would not accept. Alert on ANY non-zero value."""
+        self._log_refusals.labels(ENDPOINT, self.environment).inc()
 
     def record_quarantine(self) -> None:
         self._quarantined.labels(ENDPOINT, self.environment).inc()

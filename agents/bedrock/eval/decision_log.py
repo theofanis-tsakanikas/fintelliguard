@@ -77,6 +77,11 @@ class DecisionRecord:
     guardrail_blocked: bool | None = None
     guardrail_policy: str | None = None
     grounding_score: float | None = None
+    # Whether the verdict actually REACHED the caller. A record that says a verdict was
+    # blocked but not whether it was withheld cannot answer the only question a rejection
+    # raises — and for a while the answer was "it shipped anyway", because a guardrail block
+    # incremented a counter and nothing else.
+    released: bool | None = None
 
     # the policy snapshot in force when this decision was made. Bound to an immutable
     # guardrail version (see agents/bedrock/terraform/guardrail.tf) precisely so this

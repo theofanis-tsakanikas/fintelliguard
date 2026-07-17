@@ -12,6 +12,7 @@ from datetime import datetime
 import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 
+from agents.bedrock.eval.decision_log import MemorySink
 from agents.bedrock.eval.judge import evaluate_verdict
 from agents.bedrock.guardrails.policy import GuardrailPolicy
 from ml.features.schema import FEATURE_NAMES
@@ -231,3 +232,97 @@ def test_a_verdict_citing_unretrieved_regulation_is_blocked_by_the_guardrail():
     )
     assert decision.blocked
     assert decision.policy == "GROUNDING"
+
+
+# --------------------------------------------------------------------------- #
+# A blocked verdict must be blocked — not counted and shipped
+# --------------------------------------------------------------------------- #
+
+
+def _flagged_scored() -> dict:
+    return {
+        "fraud_score": 0.97,
+        "model_version": "fraud-xgb:test",
+        "threshold": 0.7,
+        "decision_hint": "block",
+        "top_features": [{"name": "country_mismatch", "value": True, "contribution": 0.5}],
+    }
+
+
+class _AlwaysBlocks(GuardrailPolicy):
+    """A guardrail that finds something. The point is what the funnel DOES about it."""
+
+    def evaluate_output(self, text, *, grounding_score=None):
+        from agents.bedrock.guardrails.policy import PII, GuardrailDecision
+
+        return GuardrailDecision(True, PII, "raw PII present in output")
+
+
+class _AlwaysFlags:
+    """A scorer that always flags, so the Tier-2 path is exercised deterministically."""
+
+    class config:  # noqa: N801 - mirrors FraudScorer's attribute shape
+        model_version = "fraud-xgb:test"
+
+    def score(self, features):
+        return _flagged_scored()
+
+
+def test_a_guardrail_block_withholds_the_verdict():
+    """`if guard.blocked: metrics.record_guardrail_block(...)` was the ENTIRE effect.
+
+    A Prometheus counter went up and the verdict shipped: a verdict the guardrail had just
+    identified as leaking a card number was returned to the caller and written verbatim
+    into the audit log, with the guardrail's own finding attached as metadata. The control
+    detected the leak and passed it on. `blocked` has to mean blocked.
+    """
+    sink = MemorySink()
+    m = ServingMetrics(registry=CollectorRegistry())
+    result = process_transaction(
+        _txn("t-blocked"),
+        CardHistoryStore(),
+        _AlwaysFlags(),
+        _AlwaysBlocks(),
+        m,
+        sink,
+    )
+
+    assert result["verdict_released"] is False, "the guardrail blocked and the verdict shipped"
+    assert result["withheld_because"].startswith("guardrail:")
+    assert result["review_queue"], "a withheld verdict must name where it goes"
+    assert sink.records[0].released is False
+
+
+def test_a_refused_decision_record_does_not_take_the_funnel_down(scorer):
+    """The PII refusal was a poison pill.
+
+    `record_decision` raises when a record would carry raw PII, and nothing caught it — so
+    the trigger condition for this control was a payment-scoring OUTAGE: an unhashed
+    card_hash upstream (the exact scenario it exists for) raised out of the consumer loop,
+    closed the consumer with the offset uncommitted, and the restart re-read the same
+    message. A crash loop, caused by a guardrail. Meanwhile `FeatureComputationError` was
+    carefully quarantined per-row eight lines above.
+    """
+    registry = CollectorRegistry()
+    m = ServingMetrics(registry=registry)
+    sink = MemorySink()
+
+    # An unhashed PAN where the hash should be — what the control is FOR.
+    result = process_transaction(
+        _txn("t-pii", card_hash="4111111111111111"),
+        CardHistoryStore(),
+        scorer,
+        GuardrailPolicy(),
+        m,
+        sink,
+    )
+
+    assert result["status"] == "scored", "the funnel died on a refused audit record"
+    assert sink.records == [], "raw PII was written to the audit log"
+    assert (
+        registry.get_sample_value(
+            "fintelliguard_decision_log_refusals_total",
+            {"endpoint": "fintelliguard-fraud-score", "environment": "local"},
+        )
+        == 1.0
+    ), "the refusal was swallowed silently — an unrecorded decision must page someone"

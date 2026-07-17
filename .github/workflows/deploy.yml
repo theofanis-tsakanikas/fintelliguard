@@ -50,8 +50,21 @@ jobs:
     name: Re-run the gates on the deploying ref
     uses: ./.github/workflows/ci.yml
 
+  # Plans the FOUNDATION layer only, and uploads the diff as TEXT for the approver to read.
+  #
+  # Two things this deliberately does not do, both learned the hard way:
+  #
+  # 1. It does not plan every layer. `infra/databricks` and `agents/bedrock/terraform` read
+  #    `data.terraform_remote_state.aws`, so before `infra/aws` has applied those outputs do
+  #    not exist and the plan fails on "Unsupported attribute". Plan-all-then-apply-all
+  #    cannot work on a first deploy, or on any deploy that changes an upstream output.
+  # 2. It does not upload the BINARY plan. A `.tfplan` stores every variable value verbatim,
+  #    including `sensitive = true` ones — `sensitive` redacts console output, not the file.
+  #    Uploading it published `DATABRICKS_CLIENT_SECRET` in cleartext to anyone with repo
+  #    read, for five days, recoverable with `terraform show -json tfplan`. The text render
+  #    honours `sensitive`; the file does not.
   plan:
-    name: Plan all layers (${{ inputs.environment }})
+    name: Plan the foundation layer (${{ inputs.environment }})
     needs: validate
     runs-on: ubuntu-latest
     steps:
@@ -68,38 +81,29 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - name: Plan every layer
-        env:
-          TF_VAR_databricks_account_id: ${{ secrets.DATABRICKS_ACCOUNT_ID }}
-          TF_VAR_databricks_client_id: ${{ secrets.DATABRICKS_CLIENT_ID }}
-          TF_VAR_databricks_client_secret: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      - name: Plan infra/aws and render it for review
         run: |
           set -euo pipefail
-          for dir in ${TF_LAYERS}; do
-            echo "::group::plan ${dir}"
-            terraform -chdir="${dir}" init -input=false -lockfile=readonly
-            terraform -chdir="${dir}" plan -input=false -out=tfplan
-            terraform -chdir="${dir}" show -no-color tfplan
-            echo "::endgroup::"
-          done
+          terraform -chdir=infra/aws init -input=false -lockfile=readonly
+          terraform -chdir=infra/aws plan -input=false -out=tfplan
+          # `show` respects `sensitive`; the .tfplan file it reads does not. Only this
+          # render leaves the runner.
+          terraform -chdir=infra/aws show -no-color tfplan | tee infra/aws/plan.txt
+          rm -f infra/aws/tfplan
 
-      - name: Upload the plans for review
+      - name: Upload the plan text for review
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-${{ inputs.environment }}-${{ github.sha }}
-          # The binary plan is what `apply` consumes; nothing else may be applied.
-          path: |
-            infra/aws/tfplan
-            infra/databricks/tfplan
-            agents/bedrock/terraform/tfplan
+          name: plan-${{ inputs.environment }}-${{ github.sha }}
+          path: infra/aws/plan.txt
           retention-days: 5
           if-no-files-found: error
 
   apply:
-    name: Apply the reviewed plan (${{ inputs.environment }})
+    name: Apply, layer by layer (${{ inputs.environment }})
     needs: plan
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }} # approval happens HERE, with a plan to read
+    environment: ${{ inputs.environment }} # the approval gate — the plan text is the artifact
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -116,20 +120,28 @@ jobs:
 
       - uses: databricks/setup-cli@dd60b7b133203edca3e8f08b1e053c43a979296e # v1.8.0
 
-      - name: Download the approved plan
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-${{ inputs.environment }}-${{ github.sha }}
-
-      # Applies the SAVED plan, not a fresh one: what was approved is what runs. A plan
-      # file also carries its own -auto-approve semantics, so there is no unreviewed diff.
-      - name: Apply every layer, in order
+      # PER-LAYER plan -> apply, in dependency order. Each layer's plan is computed AFTER
+      # the layer it depends on has applied, which is the only order that can work: layers 2
+      # and 3 read layer 1's remote-state outputs, and those do not exist until layer 1 runs.
+      #
+      # Each `plan -out` / `apply tfplan` pair lives entirely on the runner and the plan file
+      # is deleted immediately — so what applies is exactly what was just planned, and the
+      # file that carries the secrets never leaves the machine. Every diff is printed here
+      # for the record; the approver read layer 1's before approving this job.
+      - name: Apply every layer, in dependency order
+        env:
+          TF_VAR_databricks_account_id: ${{ secrets.DATABRICKS_ACCOUNT_ID }}
+          TF_VAR_databricks_client_id: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          TF_VAR_databricks_client_secret: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           for dir in ${TF_LAYERS}; do
-            echo "::group::apply ${dir}"
+            echo "::group::${dir}"
             terraform -chdir="${dir}" init -input=false -lockfile=readonly
+            terraform -chdir="${dir}" plan -input=false -out=tfplan
+            terraform -chdir="${dir}" show -no-color tfplan
             terraform -chdir="${dir}" apply -input=false tfplan
+            rm -f "${dir}/tfplan"
             echo "::endgroup::"
           done
 

@@ -206,9 +206,54 @@ def test_deploy_plans_before_it_applies():
     # matching being unable to tell a control from a description of one is the whole theme.
     plan_script = _run_script(jobs["plan"])
     apply_script = _run_script(jobs["apply"])
-    assert "-out=tfplan" in plan_script, "the plan is never saved, so apply cannot consume it"
-    assert "apply -input=false tfplan" in apply_script, "apply must run the SAVED plan"
+    assert "-out=tfplan" in plan_script, "nothing is planned for the approver to read"
+    assert "apply -input=false tfplan" in apply_script, (
+        "apply must run a SAVED plan, not a fresh one"
+    )
     assert "-auto-approve" not in apply_script, "an unreviewed apply is back in the pipeline"
+
+
+def test_the_uploaded_plan_artifact_cannot_carry_secrets():
+    """A `.tfplan` stores every variable value verbatim, including `sensitive = true` ones.
+
+    `sensitive` redacts console output; it does not redact the file. Uploading the binary
+    plan published `DATABRICKS_CLIENT_SECRET` in cleartext to anyone with repo read, for
+    five days, recoverable with `terraform show -json tfplan`. It was a new exposure created
+    by the commit that added the plan/apply split — previously the secret only ever lived in
+    the runner's memory.
+
+    Only the `show` render may leave the runner: that one honours `sensitive`.
+    """
+    doc = _load("deploy")
+    for job in doc["jobs"].values():
+        for step in job.get("steps", []):
+            if "upload-artifact" not in str(step.get("uses", "")):
+                continue
+            paths = str(step.get("with", {}).get("path", ""))
+            assert "tfplan" not in paths, (
+                f"the workflow uploads {paths!r} — a .tfplan carries every variable value "
+                "in cleartext, including the Databricks client secret"
+            )
+
+
+def test_each_layer_is_planned_after_the_layer_it_depends_on():
+    """Plan-all-then-apply-all cannot work here, and would fail mid-deploy.
+
+    `infra/databricks` and `agents/bedrock/terraform` read
+    `data.terraform_remote_state.aws`. Before `infra/aws` applies, those outputs do not
+    exist, so planning them first fails on "Unsupported attribute" — on a first deploy, or
+    on any deploy that changes an upstream output. The apply job plans each layer directly
+    before applying it.
+    """
+    apply_script = _run_script(_load("deploy")["jobs"]["apply"])
+    plan_pos = apply_script.find("plan -input=false -out=tfplan")
+    apply_pos = apply_script.find("apply -input=false tfplan")
+    assert plan_pos != -1 and apply_pos != -1, "the apply job does not plan before applying"
+    assert plan_pos < apply_pos, "the apply job applies before it plans"
+    assert "for dir in ${TF_LAYERS}" in apply_script, (
+        "the apply job does not iterate the layers, so plan/apply are not interleaved "
+        "per layer and an upstream output cannot be read by the layer below it"
+    )
 
 
 def test_deploy_only_ships_what_ci_validated():

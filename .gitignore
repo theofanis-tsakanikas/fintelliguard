@@ -9,6 +9,12 @@
 # one, and it was the only entry in this file that was actively wrong.
 *.tfstate
 *.tfstate.*
+# Saved plans. A .tfplan stores every variable value VERBATIM, including `sensitive = true`
+# ones — `sensitive` redacts console output, not the file. A local `make plan` was one
+# `git add .` away from committing DATABRICKS_CLIENT_SECRET.
+tfplan
+*.tfplan
+plan.txt
 *.tfvars
 *.tfvars.json
 crash.log

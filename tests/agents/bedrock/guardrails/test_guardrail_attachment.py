@@ -93,6 +93,37 @@ def test_agent_binds_an_immutable_version_not_draft(model, agent):
     assert ref.type == GUARDRAIL_VERSION
 
 
+def test_the_version_is_replaced_when_the_policy_changes(model):
+    """An "immutable version" that never re-mints pins the agent to version 1 forever.
+
+    `aws_bedrock_guardrail_version` has no argument derived from the policy body — only
+    `guardrail_arn`, which does not change when the policy does — so Terraform saw no diff
+    on any policy edit and the agent kept running version 1 while DRAFT drifted underneath.
+    The comment above the resource claimed the opposite ("every apply that changes the
+    policy mints a new version"), which made it a comment denying a hole.
+    """
+    version = model.one(GUARDRAIL_VERSION)
+
+    lifecycle = version.get("lifecycle")
+    assert lifecycle, (
+        "the version has no lifecycle block, so nothing replaces it when the policy changes "
+        "— the agent stays pinned to version 1 while DRAFT drifts"
+    )
+    block = lifecycle[0] if isinstance(lifecycle, list) else lifecycle
+    triggers = block.get("replace_triggered_by")
+    assert triggers, "replace_triggered_by is absent: a policy edit produces no new version"
+    assert any(GUARDRAIL in str(t) for t in triggers), (
+        f"the version is replaced by {triggers}, which is not the guardrail it snapshots"
+    )
+
+    # The description must derive from the policy, so a version is self-identifying in the
+    # console rather than an opaque number.
+    assert "fingerprint" in str(version.get("description", "")), (
+        "the version's description does not derive from the policy, so two different "
+        "policies produce indistinguishable snapshots"
+    )
+
+
 def test_the_bound_version_snapshots_the_bound_guardrail(model, agent):
     """The version the agent uses must be a snapshot of the guardrail it names.
 

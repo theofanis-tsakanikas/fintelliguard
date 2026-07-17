@@ -291,6 +291,33 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/agents/langgraph/test_graph.py",
         must_fail="test_the_agent_stops_acting_once_its_budget_is_spent",
     ),
+    Attack(
+        name="guardrail-block-only-counts",
+        rationale=(
+            "What shipped: a guardrail block incremented a Prometheus counter and the "
+            "verdict shipped anyway — a verdict identified as leaking a card number was "
+            "returned to the caller and written verbatim into the audit log, with the "
+            "guardrail's own finding attached as metadata."
+        ),
+        path="ml/serving/stream_service.py",
+        old="        released = gate.accepted and not guard.blocked",
+        new="        released = True",
+        gate="tests/serving/test_local_runtime.py",
+        must_fail="test_a_guardrail_block_withholds_the_verdict",
+    ),
+    Attack(
+        name="pii-refusal-crashes-the-funnel",
+        rationale=(
+            "The PII refusal was a poison pill: DecisionLogError escaped the consumer loop, "
+            "the offset was never committed, and the restart re-read the same message. The "
+            "trigger condition for a security control was a payment-scoring outage."
+        ),
+        path="ml/serving/stream_service.py",
+        old="    except Exception:  # noqa: BLE001 - nothing here may take the payment path down",
+        new="    except _NeverRaised:",
+        gate="tests/serving/test_local_runtime.py",
+        must_fail="test_a_refused_decision_record_does_not_take_the_funnel_down",
+    ),
     # --- the verdict gate ---------------------------------------------------- #
     Attack(
         name="grounding-by-substring",

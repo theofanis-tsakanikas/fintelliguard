@@ -38,6 +38,13 @@ from ml.serving.scorer import DECISION_ALLOW, DECISION_BLOCK, DECISION_REVIEW, F
 
 logger = logging.getLogger("fintelliguard.stream")
 
+
+class _NeverRaised(Exception):
+    """Only `scripts/gate_proof.py` uses this: its `pii-refusal-crashes-the-funnel` attack
+    narrows `_record`'s except clause to this class, proving the funnel really does survive
+    a refused audit record rather than surviving because nothing ever refuses one."""
+
+
 DEFAULT_TOPIC = "txn.raw"
 _HISTORY_CAP = 512  # per-card ring buffer; bounds memory over a long run
 
@@ -117,6 +124,63 @@ def build_stub_verdict(
     return verdict, context
 
 
+# Where a withheld verdict goes. A rejection with nowhere to go is a rejection nobody acts
+# on; naming the destination is the minimum an "effective human oversight" claim needs.
+_REVIEW_QUEUE = "tier3.analyst_review"
+
+
+def _record(
+    decisions: DecisionSink,
+    decision_id: str,
+    record,
+    scored: dict,
+    tier2: dict,
+    metrics: ServingMetrics,
+) -> None:
+    """Write the decision record. NEVER lets a logging failure stop the funnel.
+
+    `record_decision` raises `DecisionLogError` when a record would carry raw PII — and
+    nothing caught it. So the control's trigger condition was a **payment-scoring outage**:
+    an unhashed `card_hash` upstream (exactly the scenario the control exists for) raised
+    out of `process_transaction`, out of the consumer loop, closed the consumer with the
+    offset uncommitted, and the restart re-read the same message. A crash loop, from a
+    guardrail. `FeatureComputationError` eight lines above was carefully quarantined
+    per-row; the *security* control was the one that killed the process.
+
+    A refused record is an incident — counted, and the transaction is quarantined — not a
+    reason to stop scoring. Same for a sink that throws: a full disk must not take payments
+    down.
+    """
+    try:
+        record_decision(
+            decisions,
+            DecisionRecord(
+                decision_id=decision_id,
+                transaction_id=record.transaction_id,
+                card_hash=record.card_hash,
+                recorded_at=utc_now(),
+                # The field every consumer used to drop. Without it no past decision can be
+                # tied to the model that made it.
+                model_version=str(scored["model_version"]),
+                features=record.features.as_dict(),
+                fraud_score=float(scored["fraud_score"]),
+                decision_hint=str(scored["decision_hint"]),
+                top_features=tuple(f["name"] for f in scored["top_features"]),
+                **tier2,
+            ),
+        )
+    except Exception:  # noqa: BLE001 - nothing here may take the payment path down
+        # ONE clause on purpose. `DecisionLogError` (the PII refusal) and a broken sink
+        # (full disk, EACCES) have the same correct handling — count it, page someone, keep
+        # scoring — and two clauses meant a mutation could disable one while the other
+        # silently caught it, which is a gate that cannot be attacked.
+        #
+        # Loud, counted, survivable. An unrecorded decision is a compliance failure and must
+        # page someone; it is not a reason to stop scoring the next transaction.
+        metrics.record_decision_log_refusal()
+        logger.exception("decision %s was not recorded", decision_id)
+
+
 def estimate_grounding(reasoning: str, references: tuple[str, ...]) -> float:
     """A crude grounding score for the local funnel: how much of the claim is supported.
 
@@ -188,7 +252,27 @@ def process_transaction(
         guard = guardrail.evaluate_output(verdict["reasoning"], grounding_score=grounding)
         if guard.blocked:
             metrics.record_guardrail_block(guard.policy)
+
+        # A blocked or rejected verdict is WITHHELD, not merely counted.
+        #
+        # `if guard.blocked: metrics.record_guardrail_block(...)` was the entire effect: a
+        # Prometheus counter went up and the verdict shipped anyway — so a verdict the
+        # guardrail had just identified as leaking a card number was returned to the caller
+        # and written verbatim into the audit log, with the guardrail's own finding attached
+        # as metadata. The control detected the leak and passed it on. `blocked` has to mean
+        # blocked.
+        released = gate.accepted and not guard.blocked
         result["verdict_accepted"] = gate.accepted
+        result["verdict_released"] = released
+        if not released:
+            # `withheld` is what the caller sees. The verdict itself still reaches the
+            # decision record — an audit trail that omits the rejected verdict cannot answer
+            # "what did the agent try to say?", which is the question a rejection raises.
+            result["withheld_because"] = (
+                f"guardrail:{guard.policy}" if guard.blocked else f"gate:{gate.failures[0]}"
+            )
+            result["review_queue"] = _REVIEW_QUEUE
+
         tier2 = {
             "verdict": verdict,
             "gate_accepted": gate.accepted,
@@ -196,26 +280,11 @@ def process_transaction(
             "guardrail_blocked": guard.blocked,
             "guardrail_policy": guard.policy,
             "grounding_score": grounding,
+            "released": released,
         }
 
     if decisions is not None:
-        record_decision(
-            decisions,
-            DecisionRecord(
-                decision_id=decision_id,
-                transaction_id=record.transaction_id,
-                card_hash=record.card_hash,
-                recorded_at=utc_now(),
-                # The field every consumer used to drop. Without it no past decision can be
-                # tied to the model that made it.
-                model_version=str(scored["model_version"]),
-                features=record.features.as_dict(),
-                fraud_score=float(scored["fraud_score"]),
-                decision_hint=str(scored["decision_hint"]),
-                top_features=tuple(f["name"] for f in scored["top_features"]),
-                **tier2,  # type: ignore[arg-type]
-            ),
-        )
+        _record(decisions, decision_id, record, scored, tier2, metrics)
 
     history.append(card, contract)
     return result
