@@ -137,8 +137,18 @@ _ARTICLE_NUMBERS = re.compile(r"(\d+[a-z]?)", re.IGNORECASE)
 # What may sit between article numbers in one citation: separators, ranges, conjunctions.
 _ARTICLE_TAIL = re.compile(r"^[\s.:]*((?:\d+[a-z]?)(?:\s*(?:[-–—,;]|and|to|&)\s*\d+[a-z]?)*)")
 
-# A regulatory instrument by name: PSD2, AMLD5, GDPR, MiFID II, EBA...
-_INSTRUMENT = re.compile(r"\b(PSD\d?|AMLD\d?|GDPR|MiFID(?:\s*II)?|EBA|MLR)\b", re.IGNORECASE)
+# A regulatory instrument by name: PSD2, AMLD5, GDPR, RTS, MiFID II, EBA...
+#
+# `RTS` (Commission Delegated Regulation (EU) 2018/389 — the technical standard that
+# operationalises PSD2 Art. 97) is in the corpus and is the instrument a payment-fraud
+# verdict cites for the SCA exemptions, above all Art. 18 (transaction risk analysis).
+# Leaving it unrecognised does not merely miss the citation — an article with no
+# instrument in front of it INHERITS the last one seen, so "PSD2 Art. 97 and RTS Art. 18"
+# grounded as `(PSD2, ART.18)`: a pair the verdict never cited, checked against a
+# provision that means something else. Naming the instrument makes the pair honest.
+_INSTRUMENT = re.compile(
+    r"\b(PSD\d?|AMLD\d?|GDPR|MiFID(?:\s*II)?|EBA|MLR|RTS)\b", re.IGNORECASE
+)
 
 # A guideline reference: "GL 2021/03".
 _GUIDELINE = re.compile(r"\bGL\s*(\d{4}/\d+)\b", re.IGNORECASE)

@@ -95,13 +95,25 @@ def test_the_corpus_can_actually_ground_the_provisions_a_verdict_cites():
     for chunk in chunk_documents(load_corpus(corpus_dir)):
         grounded |= provision_pairs(chunk.text)
 
-    # Strong Customer Authentication and Customer Due Diligence — the two provisions a
-    # fraud verdict leans on most, in the forms an agent actually writes them.
-    for pair in [("PSD2", "ART.97"), ("AMLD5", "ART.13"), ("AMLD", "ART.11")]:
-        assert pair in grounded, f"{pair} is not groundable from the shipping corpus"
+    # One provision per instrument the corpus carries, chosen as the one a fraud verdict
+    # leans on hardest — and written in the form an agent actually writes it.
+    required = {
+        ("PSD2", "ART.97"): "strong customer authentication",
+        ("PSD", "ART.97"): "the same provision, cited without the version digit",
+        ("RTS", "ART.18"): "transaction risk analysis — why a real-time scorer exists",
+        ("RTS", "ART.19"): "the fraud-rate thresholds the exemption is bounded by",
+        ("AMLD5", "ART.13"): "customer due diligence",
+        ("AMLD", "ART.11"): "CDD triggers, cited without the version digit",
+        ("AMLD5", "ART.35"): "the duty to abstain from carrying out a transaction",
+        ("AMLD5", "ART.39"): "the tipping-off prohibition — what a verdict must NOT disclose",
+        ("GDPR", "ART.22"): "automated individual decision-making — what a Tier-1 block IS",
+    }
+    for pair, why in required.items():
+        assert pair in grounded, f"{pair} ({why}) is not groundable from the shipping corpus"
 
     # A fabricated provision must NOT ground — the corpus cannot vouch for what it lacks.
-    assert ("PSD2", "ART.999") not in grounded
+    for fabricated in [("PSD2", "ART.999"), ("RTS", "ART.404"), ("GDPR", "ART.888")]:
+        assert fabricated not in grounded, f"{fabricated} grounded — the corpus vouched for a lie"
 
 
 # --------------------------------------------------------------------------- #
