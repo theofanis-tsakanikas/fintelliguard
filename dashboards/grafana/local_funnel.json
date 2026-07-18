@@ -1,0 +1,161 @@
+{
+  "uid": "fintelliguard-local-funnel",
+  "title": "FintelliGuard — Local Funnel (no cloud)",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "utc",
+  "tags": ["fintelliguard", "local"],
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "10s",
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "type": "custom",
+        "label": "Environment",
+        "query": "local,dev,prod",
+        "current": { "text": "local", "value": "local" },
+        "options": [
+          { "text": "local", "value": "local", "selected": true },
+          { "text": "dev", "value": "dev", "selected": false },
+          { "text": "prod", "value": "prod", "selected": false }
+        ],
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Tier-1 throughput by decision (req/s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{decision}}",
+          "expr": "sum by (decision) (rate(model_serving_requests_total{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[1m]))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Fraud-score distribution (p50 / p90 / p99)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "min": 0, "max": 1 } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.50, sum(rate(fintelliguard_fraud_score_bucket{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[5m])) by (le))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p90",
+          "expr": "histogram_quantile(0.90, sum(rate(fintelliguard_fraud_score_bucket{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[5m])) by (le))"
+        },
+        {
+          "refId": "C",
+          "legendFormat": "p99",
+          "expr": "histogram_quantile(0.99, sum(rate(fintelliguard_fraud_score_bucket{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[5m])) by (le))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "get_fraud_score latency (p50 / p99)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.50, sum(rate(model_serving_request_duration_seconds_bucket{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[5m])) by (le))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p99",
+          "expr": "histogram_quantile(0.99, sum(rate(model_serving_request_duration_seconds_bucket{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[5m])) by (le))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Tier-2 verdict-gate outcomes (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{result}}",
+          "expr": "sum by (result) (rate(fintelliguard_verdict_gate_total{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Flagged rate (review+block)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2 } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(model_serving_requests_total{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\", decision=~\"review|block\"}[5m])) / clamp_min(sum(rate(model_serving_requests_total{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}[5m])), 1)"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Guardrail blocks (total)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(fintelliguard_guardrail_blocks_total{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}) or vector(0)"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Quarantined (total)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(fintelliguard_quarantined_total{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}) or vector(0)"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Decision-log refusals (must be 0)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(fintelliguard_decision_log_refusals_total{endpoint=\"fintelliguard-fraud-score\", environment=\"$environment\"}) or vector(0)"
+        }
+      ]
+    }
+  ]
+}

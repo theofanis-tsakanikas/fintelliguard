@@ -12,8 +12,11 @@ from ._helpers import (
     load_dashboards,
 )
 
-_DATASOURCES_YAML = PROVISIONING_DIR / "datasources.yaml"
-_DASHBOARDS_YAML = PROVISIONING_DIR / "dashboards.yaml"
+# Grafana reads provider configs from the `datasources/` and `dashboards/` SUBdirectories of
+# the provisioning path, not its root — the files sat flat before and Grafana silently loaded
+# nothing. The test now asserts the layout Grafana actually consumes.
+_DATASOURCES_YAML = PROVISIONING_DIR / "datasources" / "datasources.yaml"
+_DASHBOARDS_YAML = PROVISIONING_DIR / "dashboards" / "dashboards.yaml"
 
 
 def _datasources():

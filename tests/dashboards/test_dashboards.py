@@ -40,6 +40,16 @@ _REQUIRED_PANELS = {
         "Guardrail block rate",
         "Tier-2 verdict latency p99",
     },
+    # The local funnel dashboard queries ONLY the series the docker scorer actually emits
+    # (fintelliguard_* + model_serving_*), so it is the one dashboard that fully populates
+    # with no cloud. The production four target the real cloud metric taxonomy.
+    "local_funnel": {
+        "Tier-1 throughput by decision (req/s)",
+        "Fraud-score distribution (p50 / p90 / p99)",
+        "get_fraud_score latency (p50 / p99)",
+        "Tier-2 verdict-gate outcomes (rate)",
+        "Decision-log refusals (must be 0)",
+    },
 }
 
 

@@ -1,22 +1,44 @@
 {
   "uid": "fintelliguard-fraud-overview",
-  "title": "FintelliGuard — Fraud Overview",
+  "title": "FintelliGuard \u2014 Fraud Overview",
   "schemaVersion": 39,
   "version": 1,
   "timezone": "utc",
-  "tags": ["fintelliguard", "fraud"],
-  "time": { "from": "now-6h", "to": "now" },
+  "tags": [
+    "fintelliguard",
+    "fraud"
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
         "name": "environment",
         "type": "custom",
         "label": "Environment",
-        "query": "dev,prod",
-        "current": { "text": "dev", "value": "dev" },
+        "query": "local,dev,prod",
+        "current": {
+          "text": "local",
+          "value": "local"
+        },
         "options": [
-          { "text": "dev", "value": "dev", "selected": true },
-          { "text": "prod", "value": "prod", "selected": false }
+          {
+            "text": "local",
+            "value": "local",
+            "selected": true
+          },
+          {
+            "text": "dev",
+            "value": "dev",
+            "selected": false
+          },
+          {
+            "text": "prod",
+            "value": "prod",
+            "selected": false
+          }
         ],
         "includeAll": false
       }
@@ -27,8 +49,16 @@
       "id": 1,
       "title": "Fraud score distribution",
       "type": "barchart",
-      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": {
+        "type": "grafana-databricks-datasource",
+        "uid": "fintelliguard-databricks"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
@@ -41,8 +71,16 @@
       "id": 2,
       "title": "Decision mix",
       "type": "piechart",
-      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": {
+        "type": "grafana-databricks-datasource",
+        "uid": "fintelliguard-databricks"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
@@ -55,8 +93,16 @@
       "id": 3,
       "title": "Tier-2 escalation rate",
       "type": "stat",
-      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
-      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 },
+      "datasource": {
+        "type": "grafana-databricks-datasource",
+        "uid": "fintelliguard-databricks"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
       "targets": [
         {
           "refId": "A",
@@ -69,8 +115,16 @@
       "id": 4,
       "title": "Avg amount z-score by MCC risk tier",
       "type": "table",
-      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
-      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 8 },
+      "datasource": {
+        "type": "grafana-databricks-datasource",
+        "uid": "fintelliguard-databricks"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 16,
+        "x": 8,
+        "y": 8
+      },
       "targets": [
         {
           "refId": "A",
@@ -83,8 +137,16 @@
       "id": 5,
       "title": "Top merchant risk",
       "type": "table",
-      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": {
+        "type": "grafana-databricks-datasource",
+        "uid": "fintelliguard-databricks"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
       "targets": [
         {
           "refId": "A",
@@ -97,8 +159,16 @@
       "id": 6,
       "title": "Top country risk",
       "type": "table",
-      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": {
+        "type": "grafana-databricks-datasource",
+        "uid": "fintelliguard-databricks"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
       "targets": [
         {
           "refId": "A",

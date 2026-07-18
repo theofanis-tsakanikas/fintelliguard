@@ -1,22 +1,44 @@
 {
   "uid": "fintelliguard-serving-latency",
-  "title": "FintelliGuard — Serving & Latency",
+  "title": "FintelliGuard \u2014 Serving & Latency",
   "schemaVersion": 39,
   "version": 1,
   "timezone": "utc",
-  "tags": ["fintelliguard", "serving"],
-  "time": { "from": "now-1h", "to": "now" },
+  "tags": [
+    "fintelliguard",
+    "serving"
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
         "name": "environment",
         "type": "custom",
         "label": "Environment",
-        "query": "dev,prod",
-        "current": { "text": "dev", "value": "dev" },
+        "query": "local,dev,prod",
+        "current": {
+          "text": "local",
+          "value": "local"
+        },
         "options": [
-          { "text": "dev", "value": "dev", "selected": true },
-          { "text": "prod", "value": "prod", "selected": false }
+          {
+            "text": "local",
+            "value": "local",
+            "selected": true
+          },
+          {
+            "text": "dev",
+            "value": "dev",
+            "selected": false
+          },
+          {
+            "text": "prod",
+            "value": "prod",
+            "selected": false
+          }
         ],
         "includeAll": false
       }
@@ -27,8 +49,16 @@
       "id": 1,
       "title": "get_fraud_score p99 latency",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "fintelliguard-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
@@ -41,8 +71,16 @@
       "id": 2,
       "title": "get_fraud_score p50 latency",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "fintelliguard-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
@@ -55,8 +93,16 @@
       "id": 3,
       "title": "Request rate",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "fintelliguard-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "targets": [
         {
           "refId": "A",
@@ -69,8 +115,16 @@
       "id": 4,
       "title": "Served model version",
       "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "fintelliguard-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "targets": [
         {
           "refId": "A",

@@ -29,8 +29,15 @@ simulator ──▶ Kafka (txn.raw) ──▶ streaming scorer ──▶ Prometh
   flagged cases through the real verdict gate + output guardrail, and exposes `/metrics` on
   `:8000` with the exact series the dashboards query.
 - **`prometheus`** — scrapes the scorer.
-- **`grafana`** — provisioned from the committed `dashboards/` (the Prometheus panels light up;
-  the Databricks-SQL panels need a warehouse and stay empty locally).
+- **`grafana`** — provisioned from the committed `dashboards/`. Open **"FintelliGuard — Local
+  Funnel (no cloud)"**: it queries the `fintelliguard_*` / `model_serving_*` series the local
+  scorer actually emits (score distribution, throughput by decision, latency, verdict-gate
+  outcomes, guardrail/quarantine/log-refusal counters) and is fully populated. The four
+  production dashboards target the real cloud metric taxonomy (`dlt_pipeline_up`,
+  `kafka_consumergroup_lag`, `bedrock_verdict_duration_seconds`, Databricks SQL) — of those,
+  only **Serving & Latency** lights up locally; the DLT / Kafka-exporter / Bedrock / Databricks
+  panels stay empty because no such component runs here. Every dashboard's `environment`
+  variable now defaults to `local` (dropdown still offers `dev` / `prod`).
 
 ## Honest scope
 

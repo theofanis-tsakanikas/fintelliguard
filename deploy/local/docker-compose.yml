@@ -4,9 +4,10 @@
 #
 # Brings the whole Tier-1/Tier-2 funnel to life with NO cloud, NO AWS/Databricks/Bedrock:
 #   simulator -> Kafka(txn.raw) -> streaming scorer (features -> XGBoost -> verdict gate ->
-#   guardrail) -> Prometheus -> Grafana. The scorer emits the exact metric names the
-#   committed Grafana dashboards query, so the repo's Prometheus/Grafana story is real here,
-#   not just dashboard JSON. Grafana: http://localhost:3000 (admin / admin).
+#   guardrail) -> Prometheus -> Grafana. The scorer emits real metrics; open the
+#   "FintelliGuard — Local Funnel (no cloud)" dashboard for the fully-populated view (the
+#   production dashboards target the cloud metric taxonomy and stay partly empty locally).
+#   Grafana: http://localhost:3000 (admin / admin).
 
 name: fintelliguard-local
 

@@ -1,22 +1,45 @@
 {
   "uid": "fintelliguard-compliance",
-  "title": "FintelliGuard — Compliance (Tier-2)",
+  "title": "FintelliGuard \u2014 Compliance (Tier-2)",
   "schemaVersion": 39,
   "version": 1,
   "timezone": "utc",
-  "tags": ["fintelliguard", "compliance", "bedrock"],
-  "time": { "from": "now-24h", "to": "now" },
+  "tags": [
+    "fintelliguard",
+    "compliance",
+    "bedrock"
+  ],
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
         "name": "environment",
         "type": "custom",
         "label": "Environment",
-        "query": "dev,prod",
-        "current": { "text": "dev", "value": "dev" },
+        "query": "local,dev,prod",
+        "current": {
+          "text": "local",
+          "value": "local"
+        },
         "options": [
-          { "text": "dev", "value": "dev", "selected": true },
-          { "text": "prod", "value": "prod", "selected": false }
+          {
+            "text": "local",
+            "value": "local",
+            "selected": true
+          },
+          {
+            "text": "dev",
+            "value": "dev",
+            "selected": false
+          },
+          {
+            "text": "prod",
+            "value": "prod",
+            "selected": false
+          }
         ],
         "includeAll": false
       }
@@ -27,8 +50,16 @@
       "id": 1,
       "title": "Verdict counts",
       "type": "piechart",
-      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "datasource": {
+        "type": "grafana-databricks-datasource",
+        "uid": "fintelliguard-databricks"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
@@ -41,8 +72,16 @@
       "id": 2,
       "title": "Guardrail block rate",
       "type": "stat",
-      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "datasource": {
+        "type": "grafana-databricks-datasource",
+        "uid": "fintelliguard-databricks"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
@@ -55,8 +94,16 @@
       "id": 3,
       "title": "Tier-2 verdict latency p99",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "fintelliguard-prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "fintelliguard-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
@@ -69,8 +116,16 @@
       "id": 4,
       "title": "Verdicts per minute",
       "type": "timeseries",
-      "datasource": { "type": "grafana-databricks-datasource", "uid": "fintelliguard-databricks" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "datasource": {
+        "type": "grafana-databricks-datasource",
+        "uid": "fintelliguard-databricks"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
       "targets": [
         {
           "refId": "A",
