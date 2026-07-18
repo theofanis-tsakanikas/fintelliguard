@@ -64,12 +64,44 @@ def test_chunk_documents_keeps_doc_scoped_ids():
 
 
 def test_load_corpus_reads_regulation_marker():
+    """The shipping corpus is the VERBATIM EUR-Lex text, tagged per instrument.
+
+    Was pinned to a single synthetic `aml_psd2_excerpt` stand-in. The corpus is now the
+    real Directives, split one file per instrument, so the marker carries `PSD2` / `AML`
+    separately — which is what lets a retrieval filter by instrument at all.
+    """
     corpus_dir = Path(__file__).resolve().parents[3] / "agents" / "bedrock" / "kb" / "corpus"
     docs = load_corpus(corpus_dir)
-    assert docs, "expected at least the sample regulatory doc"
-    sample = next(d for d in docs if d.doc_id == "aml_psd2_excerpt")
-    assert sample.regulation == "AML/PSD2"  # parsed from the inline marker
+    assert docs, "expected the regulatory corpus to load"
+
+    regulations = {d.regulation for d in docs}
+    assert {"PSD2", "AML"} <= regulations, f"missing an instrument: {regulations}"
     assert chunk_documents(docs)  # the loaded corpus chunks cleanly
+
+
+def test_the_corpus_can_actually_ground_the_provisions_a_verdict_cites():
+    """A corpus is only useful if the verdict gate can GROUND a citation against it.
+
+    The gate matches `(instrument, article)` PAIRS (`judge.provision_pairs`), and raw
+    EUR-Lex text says only "Article 97" — the instrument name appears once, in the
+    document title. So the corpus carries the citation forms in each article heading;
+    without that, every real citation would fail grounding and the verdict would be
+    withheld. This test is what proves the corpus is wired to the gate, not just present.
+    """
+    from agents.bedrock.eval.judge import provision_pairs
+
+    corpus_dir = Path(__file__).resolve().parents[3] / "agents" / "bedrock" / "kb" / "corpus"
+    grounded = set()
+    for chunk in chunk_documents(load_corpus(corpus_dir)):
+        grounded |= provision_pairs(chunk.text)
+
+    # Strong Customer Authentication and Customer Due Diligence — the two provisions a
+    # fraud verdict leans on most, in the forms an agent actually writes them.
+    for pair in [("PSD2", "ART.97"), ("AMLD5", "ART.13"), ("AMLD", "ART.11")]:
+        assert pair in grounded, f"{pair} is not groundable from the shipping corpus"
+
+    # A fabricated provision must NOT ground — the corpus cannot vouch for what it lacks.
+    assert ("PSD2", "ART.999") not in grounded
 
 
 # --------------------------------------------------------------------------- #
