@@ -1,6 +1,6 @@
 """Pure XGBoost training: deterministic split, train, evaluate, MLflow logging.
 
-Trains on EXACTLY the canonical 15 features (parity asserted; the label is never a
+Trains on EXACTLY the canonical feature set (parity asserted; the label is never a
 feature). The MLflow tracking URI is configurable — a local file store for tests, a
 Databricks URI for real runs. The fraud score AND feature importance are produced for
 the downstream Bedrock contract (docs/bedrock-integration.md).
@@ -100,7 +100,7 @@ def train_model(frame: pd.DataFrame, config: TrainConfig | None = None) -> Train
     config = config or TrainConfig()
 
     x, y = prepare_xy(frame)
-    # Parity guard: train on exactly the canonical 15, label excluded.
+    # Parity guard: train on exactly the canonical feature set, label excluded.
     if list(x.columns) != FEATURE_COLUMNS:
         raise ValueError("training features differ from the canonical schema")
 

@@ -70,3 +70,6 @@ PRE-PUBLISH.md
 *.key
 *.p12
 *.pfx
+
+# ---- Personal notes (local only) ----
+notes/

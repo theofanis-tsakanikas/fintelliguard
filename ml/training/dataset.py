@@ -4,8 +4,8 @@ In production the features come from `gold.txn_features_training` / the Feature 
 offline store (point-in-time joins). The training function, however, RECEIVES a
 features+label DataFrame, so tests pass a synthetic frame and never touch the cloud.
 
-The feature columns are exactly the canonical 15 from `ml/features` — parity is enforced
-here, and the label is never one of them.
+The feature columns are exactly the canonical set from `ml/features` (`FEATURE_NAMES`) —
+parity is enforced here, and the label is never one of them.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ assert LABEL_COLUMN not in FEATURE_COLUMNS
 
 
 def prepare_xy(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    """Split a features+label frame into (X, y) on EXACTLY the canonical 15 features.
+    """Split a features+label frame into (X, y) on EXACTLY the canonical feature set.
 
     Raises if any feature or the label is missing. X is numeric (bools -> 0/1) with
     columns in canonical order; the label is excluded from X.
