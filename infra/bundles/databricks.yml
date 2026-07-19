@@ -54,8 +54,15 @@ targets:
   dev:
     mode: development
     default: true
-    workspace:
-      # Neutral placeholder (not a real workspace) — auth fields cannot use variables.
-      # At deploy, the DATABRICKS_HOST env var / CLI profile overrides this with the
-      # real workspace_url output from infra/databricks.
-      host: https://example.cloud.databricks.com
+    # No `workspace.host` here, deliberately.
+    #
+    # It used to carry `https://example.cloud.databricks.com` with a comment claiming the
+    # DATABRICKS_HOST env var would override it at deploy. It does not — an explicit host in
+    # the bundle config WINS over the environment, so `bundle deploy` authenticated against
+    # a workspace that does not exist and failed with "cannot configure default
+    # credentials", naming the placeholder back in its own error.
+    #
+    # Omitted, the CLI takes the host from DATABRICKS_HOST, which `deploy.yml` sets from
+    # `terraform output workspace_url` — the layer that creates the workspace. `bundle
+    # validate` in CI still schema-checks fine without it; it already tolerates the auth
+    # error, which is all that is missing locally.
