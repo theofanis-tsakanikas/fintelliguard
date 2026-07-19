@@ -15,7 +15,7 @@
 resource "github_actions_secret" "deploy_role_arn" {
   count = var.write_github_secret ? 1 : 0
 
-  repository      = split("/", var.github_repository)[1]
-  secret_name     = "AWS_DEPLOY_ROLE_ARN"
-  plaintext_value = aws_iam_role.deploy.arn
+  repository  = split("/", var.github_repository)[1]
+  secret_name = "AWS_DEPLOY_ROLE_ARN"
+  value       = aws_iam_role.deploy.arn
 }

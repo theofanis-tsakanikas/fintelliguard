@@ -17,6 +17,12 @@ tfplan
 plan.txt
 *.tfvars
 *.tfvars.json
+# ...EXCEPT auto-loaded environment config. `*.tfvars` is ignored to stop credentials
+# reaching git, but non-secret deployment configuration (which region, whether MSK is
+# provisioned) is exactly what IaC is FOR and must be version-controlled — otherwise CI
+# silently applies the defaults instead of what the deployment actually chose.
+# Secrets still never belong here: they go via TF_VAR_ environment variables.
+!*.auto.tfvars
 crash.log
 crash.*.log
 override.tf
