@@ -42,3 +42,25 @@ variable "create_oidc_provider" {
   type        = bool
   default     = true
 }
+
+variable "write_github_secret" {
+  description = <<-DESC
+    Write the deploy role's ARN into the repository's `AWS_DEPLOY_ROLE_ARN` Actions secret.
+
+    This is what removes the last hand-carried step from the trust anchor. The chicken-and-
+    egg is real and cannot be designed away — OIDC needs a role, creating the role needs
+    credentials, and OIDC exists to remove credentials — so a human must run THIS layer
+    once, locally, with their own admin credentials. That part is correct and universal.
+
+    What is not inherent is the copy-paste that followed: read an ARN out of the terraform
+    output, paste it into a GitHub form. A value transcribed by hand is a value that can be
+    transcribed wrong, into the wrong repository, or silently not at all — and the failure
+    surfaces much later as an AssumeRole error in CI. Terraform already knows the ARN and
+    already knows the repository; let it write it.
+
+    Set false if the runner has no GitHub token (the provider needs `GITHUB_TOKEN`, or
+    `gh auth token`), or if repository secrets are managed by something else.
+  DESC
+  type        = bool
+  default     = true
+}

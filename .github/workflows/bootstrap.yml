@@ -1,12 +1,30 @@
-name: Bootstrap (state backend)
+name: Bootstrap RE-apply (state backend + OIDC trust)
 
-# GATED + DEFERRED: manual dispatch only. Creates the Terraform remote-state backend
-# (infra/aws/bootstrap). AWS credentials come from GitHub secrets. Never auto-triggered.
+# This workflow CANNOT perform the first bootstrap, and it never could.
+#
+# It assumes `secrets.AWS_DEPLOY_ROLE_ARN` in order to run `infra/aws/bootstrap` — the layer
+# whose whole purpose is to CREATE that role. Before the first apply the role does not
+# exist, the secret has no value, and AssumeRole fails. Its previous name and its comment
+# ("creates the state backend", "credentials come from GitHub secrets" while it in fact uses
+# OIDC) described something it is structurally incapable of doing.
+#
+# The first bootstrap is a HUMAN, LOCAL, one-time operation with admin credentials — the
+# trust anchor cannot be derived from the trust it anchors:
+#
+#     cd infra/aws/bootstrap && terraform init && terraform apply
+#
+# That single command creates the OIDC provider, the deploy role, the state backend, AND
+# writes AWS_DEPLOY_ROLE_ARN into this repository (see github_secret.tf), so nothing is
+# copied by hand.
+#
+# What this workflow IS good for: RE-applying the layer once the role exists — widening
+# `deploy_branches`, adding an environment to the OIDC `sub` allowlist, rotating the
+# backend's lifecycle rules — with review and an audit trail instead of someone's laptop.
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type "bootstrap" to confirm creating the state backend'
+        description: 'Type "bootstrap" to confirm RE-applying (first bootstrap must be run locally)'
         required: true
 
 permissions:
