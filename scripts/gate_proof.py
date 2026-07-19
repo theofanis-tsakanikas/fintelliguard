@@ -660,6 +660,21 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_the_kb_role_holds_only_the_permissions_ingestion_needs",
     ),
     Attack(
+        name="secret-purge-reaches-live-secrets",
+        rationale=(
+            "The purge step exists because a secret scheduled for deletion still owns its "
+            "name and blocks re-creation. Dropping the `DeletedDate` filter turns it from "
+            "'clean up what teardown left in limbo' into 'force-delete every secret under "
+            "this prefix', irreversibly and with no recovery window — while the step name "
+            "still says 'pending deletion'."
+        ),
+        path=".github/workflows/deploy.yml",
+        old="SecretList[?DeletedDate!=null && starts_with(Name, '${PREFIX}')].Name",
+        new="SecretList[?starts_with(Name, '${PREFIX}')].Name",
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_the_secret_purge_can_only_touch_secrets_already_being_deleted",
+    ),
+    Attack(
         name="teardown-stops-at-the-first-failing-layer",
         rationale=(
             "What shipped: the destroy layers ran with the default `if: success()`. Layer 3 "

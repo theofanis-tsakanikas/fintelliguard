@@ -128,6 +128,38 @@ jobs:
       # is deleted immediately — so what applies is exactly what was just planned, and the
       # file that carries the secrets never leaves the machine. Every diff is printed here
       # for the record; the approver read layer 1's before approving this job.
+      # A secret scheduled for deletion still OWNS its name, and Secrets Manager refuses to
+      # create another one with it:
+      #
+      #     InvalidRequestException: You can't create this secret because a secret with this
+      #     name is already scheduled for deletion.
+      #
+      # `secret_recovery_window_days = 0` in dev.auto.tfvars stops NEW teardowns from parking
+      # secrets in limbo, but it cannot help an estate already torn down under the old 7-day
+      # default — which is what failed run 29706126775, and only after MSK had spent 26
+      # minutes creating. Without this step that deploy is blocked for a week.
+      #
+      # Scoped twice over, because force-deleting a secret is irreversible: only names under
+      # THIS project and environment's prefix, and only ones already scheduled for deletion.
+      # A live secret has no DeletedDate and is never touched.
+      - name: Purge secrets left pending deletion by a previous teardown
+        env:
+          PREFIX: fintelliguard/${{ inputs.environment }}/
+        run: |
+          set -euo pipefail
+          pending="$(aws secretsmanager list-secrets --include-planned-deletion \
+            --query "SecretList[?DeletedDate!=null && starts_with(Name, '${PREFIX}')].Name" \
+            --output text)"
+          if [ -z "${pending}" ]; then
+            echo "no secrets pending deletion under ${PREFIX}"
+            exit 0
+          fi
+          for name in ${pending}; do
+            echo "purging ${name} (scheduled for deletion, blocks re-creation)"
+            aws secretsmanager delete-secret --secret-id "${name}" \
+              --force-delete-without-recovery >/dev/null
+          done
+
       - name: Apply every layer, in dependency order
         env:
           TF_VAR_databricks_account_id: ${{ secrets.DATABRICKS_ACCOUNT_ID }}

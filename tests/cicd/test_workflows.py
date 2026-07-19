@@ -451,3 +451,34 @@ def test_destroy_empties_versioned_buckets_before_terraform_deletes_them():
         "bucket names are not read from the state being destroyed — this step could reach "
         "buckets this layer does not own"
     )
+
+
+def test_the_secret_purge_can_only_touch_secrets_already_being_deleted():
+    """Force-deleting a secret is irreversible, so this step's SCOPE is the whole safety story.
+
+    It exists because a secret scheduled for deletion still owns its name, and Secrets
+    Manager refuses to re-create it — which blocked deploy run 29706126775 after MSK had
+    already spent 26 minutes creating.
+
+    Two filters, and dropping either is catastrophic in a different way: without the
+    `DeletedDate` test it force-deletes LIVE secrets, and without the prefix it reaches every
+    secret in the account — including other projects'.
+    """
+    steps = _load("deploy")["jobs"]["apply"]["steps"]
+    purge = [s for s in steps if "pending deletion" in s.get("name", "").lower()]
+    assert purge, "nothing purges secrets left in limbo, so a rebuild is blocked for a week"
+    step = purge[0]
+    script = step["run"]
+
+    assert "DeletedDate!=null" in script, (
+        "the purge does not restrict itself to secrets ALREADY scheduled for deletion — as "
+        "written it would force-delete live secrets, irreversibly"
+    )
+    assert "starts_with(Name, '${PREFIX}')" in script, (
+        "the purge is not scoped to this project/environment's secret prefix — it would "
+        "reach every secret in the account, including other projects'"
+    )
+    prefix = step.get("env", {}).get("PREFIX", "")
+    assert prefix.startswith("fintelliguard/") and "inputs.environment" in prefix, (
+        f"the purge prefix {prefix!r} is not pinned to this project and the target environment"
+    )
