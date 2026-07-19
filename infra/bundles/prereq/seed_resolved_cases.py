@@ -54,7 +54,7 @@ SCHEMA = "gold"
 TABLE = "resolved_cases"
 
 
-def main() -> int:
+def main() -> None:
     spark = SparkSession.builder.getOrCreate()
     fqn = f"{CATALOG}.{SCHEMA}.{TABLE}"
 
@@ -67,8 +67,22 @@ def main() -> int:
 
     count = spark.table(fqn).count()
     print(f"seeded {fqn} with {count} synthetic resolved cases")
-    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # NO `sys.exit(...)`, not even with 0.
+    #
+    # Databricks runs a `spark_python_task` inside a notebook-like host rather than as a
+    # standalone process, and there `SystemExit` is an EXCEPTION that propagates — it does
+    # not terminate anything. So a clean `sys.exit(0)` is reported as:
+    #
+    #     SystemExit: 0
+    #     Task seed failed with message: Workload failed
+    #     Error: failed to reach TERMINATED or SKIPPED, got INTERNAL_ERROR
+    #
+    # A job that did its work perfectly, failing on the way out. That is what deploy run
+    # 29707464142 hit, 11 minutes in, after the table had already been written.
+    #
+    # Returning normally is the success signal; an exception is the failure signal. There is
+    # no third channel here, so an exit code is not merely unnecessary, it is wrong.
+    main()

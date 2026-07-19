@@ -660,6 +660,20 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_the_kb_role_holds_only_the_permissions_ingestion_needs",
     ),
     Attack(
+        name="databricks-task-exits-cleanly-and-is-reported-failed",
+        rationale=(
+            "`sys.exit(0)` looks like the most ordinary line in Python. Inside Databricks' "
+            "notebook-like task host it raises SystemExit as an EXCEPTION, so a job that "
+            "wrote its table correctly is reported INTERNAL_ERROR — 11 minutes into a deploy, "
+            "with 'SystemExit: 0' as the only clue that nothing was actually wrong."
+        ),
+        path="infra/bundles/prereq/seed_resolved_cases.py",
+        old="    main()",
+        new="    sys.exit(main())",
+        gate="tests/bundles/test_databricks_tasks.py",
+        must_fail="test_a_task_script_never_calls_sys_exit",
+    ),
+    Attack(
         name="secret-purge-reaches-live-secrets",
         rationale=(
             "The purge step exists because a secret scheduled for deletion still owns its "
