@@ -86,3 +86,14 @@ variable "schemas" {
   type        = list(string)
   default     = ["bronze", "silver", "gold"]
 }
+
+variable "analyst_group_name" {
+  description = <<-DESC
+    Account-level group the fraud analysts belong to. MUST match `analyst_group` in
+    `infra/bundles/databricks.yml` — the bundle grants SELECT on the gold schemas and the
+    model registry to this name, and a mismatch fails the deploy at its last step with
+    PRINCIPAL_DOES_NOT_EXIST.
+  DESC
+  type        = string
+  default     = "fintelliguard-analysts"
+}
