@@ -666,11 +666,13 @@ ATTACKS: tuple[Attack, ...] = (
             "account read/write on the AML/PSD2 corpus, and shipped green."
         ),
         path="agents/bedrock/terraform/knowledge_base.tf",
-        old="""    Principal = [
-      aws_iam_role.kb.arn,
-      data.aws_iam_session_context.current.issuer_arn,
-    ]""",
-        new='    Principal = ["*"]',
+        # Targets ONE line inside the principal list, not the whole block. The block has
+        # now grown twice (the deployer, then the index Lambda) and each time the old
+        # whole-block target went STALE — an attack silently testing nothing, caught only
+        # because the harness refuses to score a stale patch. Injecting a wildcard INTO the
+        # list is the same violation and survives the list changing again.
+        old="      aws_iam_role.kb.arn,",
+        new='      "*",',
         gate="tests/agents/bedrock/test_knowledge_base_security.py",
         must_fail="test_the_kb_data_policy_names_a_principal_and_a_scoped_resource",
     ),

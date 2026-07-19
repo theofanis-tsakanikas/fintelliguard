@@ -139,6 +139,7 @@ resource "aws_opensearchserverless_access_policy" "kb" {
     # irrelevant here: AOSS authorises the data plane through ITS OWN policy, not IAM.
     Principal = [
       aws_iam_role.kb.arn,
+      aws_iam_role.kb_index.arn,
       data.aws_iam_session_context.current.issuer_arn,
     ]
   }])
@@ -146,30 +147,158 @@ resource "aws_opensearchserverless_access_policy" "kb" {
 
 # ---- The vector index the KB requires to pre-exist --------------------------
 #
-# Bedrock does NOT create the index; it expects it to already exist with the exact field
+# Bedrock does NOT create this index; it requires it to already exist with the exact field
 # mapping below, and `aws_bedrockagent_knowledge_base` fails at apply if it does not. There
-# is no first-class AWS-provider resource for an AOSS vector index (it is a data-plane
-# object, created over the collection's HTTPS endpoint with SigV4), so this was simply
-# missing and the KB could never have applied.
+# is no first-class provider resource for an AOSS vector index — it is a data-plane object,
+# created over the collection's HTTPS endpoint with SigV4.
 #
-# A provisioner is the honest wiring: the index-creation call lives in a committed,
-# reviewable script (`scripts/create_kb_index.py`), runs after the collection and its access
-# policy exist, and the KB depends on it — so the apply graph has the ordering the API
-# requires. It is not a console click; it is IaC that happens to use the data plane.
-resource "null_resource" "kb_vector_index" {
-  triggers = {
-    collection = aws_opensearchserverless_collection.kb.id
-    index      = var.kb_vector_index_name
-  }
+# This used to be a `local-exec` running a script on the CI runner. It could never have
+# worked: the network policy is `AllowFromPublic = false` with only the VPC endpoint and
+# Bedrock as sources, and a GitHub-hosted runner is neither. AOSS refuses it at the network
+# layer and answers `401` with an empty body — indistinguishable from an auth problem, which
+# is why it survived a round of fixing the (also genuinely wrong) data access policy.
+#
+# Running it from a Lambda INSIDE the VPC is the fix that keeps the posture: the collection
+# stays unreachable from the internet, and the one caller that must reach it does so through
+# the same private endpoint Bedrock uses.
 
-  provisioner "local-exec" {
-    command = "python3 ${path.module}/scripts/create_kb_index.py"
-    environment = {
-      AOSS_ENDPOINT = aws_opensearchserverless_collection.kb.collection_endpoint
-      INDEX_NAME    = var.kb_vector_index_name
-      AWS_REGION    = local.region
+data "archive_file" "kb_index" {
+  type        = "zip"
+  source_dir  = "${path.module}/../kb_index_lambda"
+  output_path = "${path.module}/build/kb_index_lambda.zip"
+  excludes    = ["__pycache__", "build"]
+}
+
+data "aws_iam_policy_document" "kb_index_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
     }
   }
+}
+
+resource "aws_iam_role" "kb_index" {
+  name               = "${local.name}-kb-index"
+  assume_role_policy = data.aws_iam_policy_document.kb_index_assume.json
+  tags               = { Name = "${local.name}-kb-index" }
+}
+
+# ENI management for the VPC attachment, and nothing else. `aoss:APIAccessAll` is the IAM
+# half of data-plane access; the other half is naming this role in the data access policy
+# below — AOSS requires BOTH, which is what makes a missing one look like an auth bug.
+resource "aws_iam_role_policy" "kb_index" {
+  name = "kb-index"
+  role = aws_iam_role.kb_index.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # CKV_AWS_290 / CKV_AWS_355: the ENI actions a VPC-attached Lambda needs are not
+        # resource-scopable — the network interface does not exist until Lambda creates it,
+        # so there is no ARN to name. Bounded instead by CONDITION: only ENIs in this VPC.
+        # checkov cannot see that, hence the inline skips, on the resource they except.
+        #checkov:skip=CKV_AWS_290:ENI create/delete cannot name an ARN that does not exist yet; bounded by the ec2:Vpc condition below.
+        #checkov:skip=CKV_AWS_355:Same — Resource "*" is required for ENI management and is constrained by condition, not by ARN.
+        Sid    = "VpcNetworking"
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DeleteNetworkInterface",
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "ec2:Vpc" = "arn:${local.partition}:ec2:${local.region}:${local.account_id}:vpc/${local.aws.vpc_id}"
+          }
+        }
+      },
+      {
+        Sid      = "AossDataPlane"
+        Effect   = "Allow"
+        Action   = ["aoss:APIAccessAll"]
+        Resource = [aws_opensearchserverless_collection.kb.arn]
+      },
+      {
+        Sid      = "DeadLetterQueue"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = [aws_sqs_queue.kb_index_dlq.arn]
+      },
+      {
+        Sid      = "EncryptWithTheEstateCMK"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey*"]
+        Resource = [local.aws.kms_key_arn]
+      },
+    ]
+  })
+}
+
+resource "aws_cloudwatch_log_group" "kb_index" {
+  name              = "/aws/lambda/${local.name}-kb-index"
+  retention_in_days = var.lambda_log_retention_days
+  kms_key_id        = local.aws.kms_key_arn
+  tags              = { Name = "${local.name}-kb-index-logs" }
+}
+
+resource "aws_sqs_queue" "kb_index_dlq" {
+  name                              = "${local.name}-kb-index-dlq"
+  kms_master_key_id                 = local.aws.kms_key_arn
+  kms_data_key_reuse_period_seconds = 300
+  tags                              = { Name = "${local.name}-kb-index-dlq" }
+}
+
+resource "aws_lambda_function" "kb_index" {
+  #checkov:skip=CKV_AWS_272:Needs a signer profile + signed artifact; archive_file emits unsigned zips. Same deferral as the action-group Lambda.
+  function_name = "${local.name}-kb-index"
+  role          = aws_iam_role.kb_index.arn
+  runtime       = var.lambda_runtime
+  handler       = "handler.lambda_handler"
+  filename      = data.archive_file.kb_index.output_path
+
+  source_code_hash = data.archive_file.kb_index.output_base64sha256
+  timeout          = 60
+
+  # One invocation per apply — a concurrency of 1 is not a throttle, it is a statement that
+  # two of these must never race to create the same index.
+  reserved_concurrent_executions = 1
+
+  kms_key_arn = local.aws.kms_key_arn
+
+  dead_letter_config {
+    target_arn = aws_sqs_queue.kb_index_dlq.arn
+  }
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  vpc_config {
+    subnet_ids         = local.aws.private_subnet_ids
+    security_group_ids = [local.aws.lambda_security_group_id]
+  }
+
+  environment {
+    variables = {
+      AOSS_ENDPOINT = aws_opensearchserverless_collection.kb.collection_endpoint
+      INDEX_NAME    = var.kb_vector_index_name
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.kb_index, aws_iam_role_policy.kb_index]
+  tags       = { Name = "${local.name}-kb-index" }
+}
+
+# Runs at apply time. The handler is idempotent, so re-applying the layer with the index
+# already present is a no-op rather than a failure.
+resource "aws_lambda_invocation" "kb_index" {
+  function_name = aws_lambda_function.kb_index.function_name
+  input         = jsonencode({ index = var.kb_vector_index_name })
 
   depends_on = [aws_opensearchserverless_access_policy.kb]
 }
@@ -202,7 +331,7 @@ resource "aws_bedrockagent_knowledge_base" "this" {
   # The index must exist before the KB references it.
   depends_on = [
     aws_opensearchserverless_access_policy.kb,
-    null_resource.kb_vector_index,
+    aws_lambda_invocation.kb_index,
   ]
 }
 
