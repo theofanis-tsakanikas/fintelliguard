@@ -29,22 +29,14 @@ locals {
   #
   # the moment infra/aws has no outputs — and the failure is total: the layer cannot plan,
   # so its OWN surviving resources can never be destroyed either. That is exactly what
-  # happened in run 29687321500. The destroy job (correctly) does not stop at a failing
-  # layer, because halting left MSK/VPC/NAT billing; so infra/aws came down while two
-  # buckets still stood in this layer's state, and this layer wedged permanently.
+  # happened in run 29687321500. An earlier blanket "continue past every failure" rule tore
+  # infra/aws down while two buckets still stood in this layer's state, wedging it. The
+  # destroy workflow no longer does that, but the guard here is what makes it recoverable.
   #
-  # A teardown must not be able to strand a layer. `try(..., null)` makes a destroyed
-  # upstream a survivable condition rather than a parse-level dead end.
-  #
-  # The cost, stated plainly: on an APPLY where infra/aws has genuinely not been applied
-  # yet, these resolve to null and the failure surfaces later — at workspace creation, with
-  # a Databricks-side message — instead of immediately as "Unsupported attribute". That is
-  # a worse first-deploy experience traded for a teardown that cannot deadlock. The deploy
-  # workflow already applies infra/aws first, so the null case means someone ran this layer
-  # out of order; the deadlock case cost real money.
-  # The fallbacks are SHAPED like real ids on purpose, and `null` was not enough. Providers
-  # validate a resource's arguments from CONFIG, not from state, so a resource that no longer
-  # exists is still argument-checked during a destroy plan:
+  # A teardown must not be able to strand a layer, so every read is wrapped — but `null` as
+  # the fallback was NOT enough, and that is the substance of this block. Providers validate
+  # a resource's arguments from CONFIG, not from state, so a resource long gone from state is
+  # still argument-checked while building a destroy plan:
   #
   #     with databricks_mws_networks.this, on workspace.tf line 142
   #     "vpc_id": one of `gcp_network_info,vpc_id` must be specified
@@ -57,6 +49,12 @@ locals {
   # They are deliberately unmistakable in a log. If one of these ever reaches an AWS API
   # call, the request fails naming the literal below — which is the intended outcome, because
   # it means this layer was applied without infra/aws and should not proceed.
+  #
+  # The cost, stated plainly: on an APPLY where infra/aws genuinely has not been applied, the
+  # failure now surfaces later and further away — an API rejecting `vpc-upstream-destroyed`
+  # instead of Terraform refusing to plan. A worse first-deploy message, traded for a
+  # teardown that cannot deadlock. The deploy workflow applies infra/aws first, so reaching
+  # these means someone ran this layer out of order; the deadlock cost real money.
   aws = {
     vpc_id = try(local._aws_remote.vpc_id, "vpc-upstream-destroyed")
     # TWO, because the provider enforces a 2-item minimum here (a workspace network spans
