@@ -199,7 +199,7 @@ resource "databricks_external_location" "uc" {
   # problem; the encryption declaration was missing.
   encryption_details {
     sse_encryption_details {
-      algorithm       = "SSE_KMS"
+      algorithm       = "AWS_SSE_KMS"
       aws_kms_key_arn = local.aws.kms_key_arn
     }
   }
