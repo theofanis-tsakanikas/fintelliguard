@@ -38,6 +38,15 @@ resources:
         - task_key: seed
           spark_python_task:
             python_file: ./seed_resolved_cases.py
+
+          # xgboost is a TRANSITIVE requirement, and an unobvious one: the seed derives its
+          # decision bands from `ml.serving.scorer`, which imports xgboost at module level
+          # for the scorer class the seed never touches. Deriving from the funnel's own
+          # definitions is the right call — the cost is this line. numpy and pandas are
+          # already on the runtime.
+          libraries:
+            - pypi:
+                package: xgboost
           new_cluster:
             spark_version: 15.4.x-scala2.12
             node_type_id: m5d.large
