@@ -12,10 +12,17 @@
 bundle:
   name: fintelliguard-prereq
 
+# Every first-party package the seed job's import graph reaches — traced, not guessed:
+# `agents.databricks.cases.seed` imports `simulator.generator.FraudPattern` for the
+# archetypes and `ml.serving.scorer` for the decision bands, because the fixture is derived
+# from the funnel's own definitions rather than invented alongside them. Syncing only
+# `agents` cost a full cluster spin-up to discover the second one.
 sync:
   paths:
     - .
     - ../../../agents
+    - ../../../ml
+    - ../../../simulator
 
 targets:
   dev:
