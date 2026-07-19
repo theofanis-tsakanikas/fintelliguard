@@ -108,11 +108,50 @@ resource "aws_iam_role_policy_attachment" "uc_storage" {
   policy_arn = aws_iam_policy.uc_storage.arn
 }
 
+# KMS, which the generated Unity Catalog policy does NOT cover.
+#
+# `databricks_aws_unity_catalog_policy` grants S3, STS and the SNS/SQS file-event actions —
+# and nothing else. That is correct for a plain bucket, but this one is encrypted with the
+# estate CMK, so every write needs a data key and every read needs a decrypt. Without this,
+# Databricks' own validation fails with a message that blames S3:
+#
+#     AWS IAM role does not have LIST, WRITE, DELETE permissions on url s3://...
+#
+# which sends you looking at the S3 policy that is in fact complete. The permission that is
+# missing is on the key, not the bucket.
+#
+# An IAM grant is sufficient because the key policy has `EnableRootAdministration`, so the
+# account delegates key authorisation to IAM. Scoped to the one CMK.
+resource "aws_iam_role_policy" "uc_storage_kms" {
+  name = "uc-storage-kms"
+  role = aws_iam_role.uc_storage.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "UseTheEstateCMK"
+      Effect = "Allow"
+      Action = [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey",
+      ]
+      Resource = [local.aws.kms_key_arn]
+    }]
+  })
+}
+
 # Same reason as the workspace cross-account role: Databricks VALIDATES this role by
 # assuming it, and IAM is eventually consistent. Without the wait the credential is
 # rejected for a role that is entirely correct.
 resource "time_sleep" "uc_iam_propagation" {
-  depends_on      = [aws_iam_role.uc_storage, aws_iam_role_policy_attachment.uc_storage]
+  depends_on = [
+    aws_iam_role.uc_storage,
+    aws_iam_role_policy_attachment.uc_storage,
+    aws_iam_role_policy.uc_storage_kms,
+  ]
   create_duration = "60s"
 }
 
