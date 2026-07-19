@@ -30,6 +30,7 @@ a deployment zip — the dependency that made the local-exec brittle in the firs
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -74,9 +75,21 @@ def _signed_put(endpoint: str, index: str, region: str) -> tuple[int, str]:
     url = f"{endpoint.rstrip('/')}/{index}"
     body = json.dumps(INDEX_BODY)
 
-    request = AWSRequest(
-        method="PUT", url=url, data=body, headers={"Content-Type": "application/json"}
-    )
+    # `X-Amz-Content-SHA256` is REQUIRED by AOSS on any signed request that carries a body,
+    # and botocore's `SigV4Auth` does not add it — it hashes the payload into the canonical
+    # request but sends no header. (`opensearch-py`'s AWSV4SignerAuth special-cases `aoss`
+    # and adds it, which is why the original script would have worked had it been able to
+    # reach the collection at all.)
+    #
+    # Omitting it does not produce a signature error. It produces a bare `403 Forbidden`,
+    # identical to an authorization failure — which is why this cost several deploys and was
+    # only settled by probing the live endpoint: a PUT with NO body returned 200 while the
+    # same PUT with `{}` returned 403. Not the mapping, not the permissions: the header.
+    headers = {
+        "Content-Type": "application/json",
+        "X-Amz-Content-SHA256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+    }
+    request = AWSRequest(method="PUT", url=url, data=body, headers=headers)
     # Service name is `aoss`, NOT `es`. Signing for the wrong service is another way to be
     # handed a bare 401.
     credentials = Session().get_credentials()
