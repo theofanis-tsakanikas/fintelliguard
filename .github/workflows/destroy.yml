@@ -41,6 +41,7 @@ jobs:
       TF_VAR_databricks_client_secret: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
     steps:
       - name: Typed-confirmation guard
+        id: guard
         run: |
           if [ "${{ inputs.confirm }}" != "${{ inputs.environment }}" ]; then
             echo "::error::confirmation '${{ inputs.confirm }}' does not match environment '${{ inputs.environment }}'"
@@ -51,6 +52,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Configure AWS credentials (OIDC)
+        id: creds
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-region: eu-central-1
@@ -75,7 +77,28 @@ jobs:
           case "${host}" in https://*) ;; *) host="https://${host}" ;; esac
           echo "DATABRICKS_HOST=${host}" >> "$GITHUB_ENV"
 
+      # ---- Teardown, in reverse dependency order ------------------------------------------
+      #
+      # Every layer step below carries the SAME condition, and it is the whole point:
+      #
+      #     always() && guard == success && creds == success
+      #
+      # A teardown must not stop at its first failure. It used to: the steps ran with the
+      # default `if: success()`, so when layer 3 failed on two non-empty versioned buckets,
+      # step 4 never ran and left the ENTIRE `infra/aws` layer — MSK, VPC, NAT gateway —
+      # running and billing. The layer that costs the most per hour was the one protected by
+      # the least. A destroy that reports failure having destroyed nothing is a bug; a
+      # destroy that reports failure having destroyed everything it could is correct.
+      #
+      # `always()` is scoped, NOT blanket. It is conjoined with the guard and credential
+      # outcomes so a mistyped confirmation or a failed OIDC assumption still aborts before
+      # anything is touched — `if: always()` alone would run the teardown even when the
+      # typed-confirmation guard REJECTED the request, which is the opposite of a guard.
+      #
+      # The job's exit status is decided at the end, by the summary step.
       - name: 1) infra/bundles
+        id: bundles
+        if: always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
         working-directory: infra/bundles
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
@@ -83,19 +106,55 @@ jobs:
         run: databricks bundle destroy -t ${{ inputs.environment }} --auto-approve
 
       - name: 2) agents/bedrock/terraform
+        id: bedrock
+        if: always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
         working-directory: agents/bedrock/terraform
         run: |
           terraform init -input=false
           terraform destroy -auto-approve -input=false
 
       - name: 3) infra/databricks
+        id: databricks
+        if: always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
         working-directory: infra/databricks
         run: |
           terraform init -input=false
           terraform destroy -auto-approve -input=false
 
       - name: 4) infra/aws
+        id: aws
+        if: always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
         working-directory: infra/aws
         run: |
           terraform init -input=false
           terraform destroy -auto-approve -input=false
+
+      # Continuing past a failure must never be mistaken for succeeding through it. This
+      # reports every layer's outcome and fails the job if ANY layer did not come down, so a
+      # partial teardown is loud, and re-dispatching is safe because destroy is idempotent.
+      - name: Teardown summary (fails if any layer survived)
+        if: always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
+        env:
+          OUTCOMES: |
+            1) infra/bundles=${{ steps.bundles.outcome }}
+            2) agents/bedrock/terraform=${{ steps.bedrock.outcome }}
+            3) infra/databricks=${{ steps.databricks.outcome }}
+            4) infra/aws=${{ steps.aws.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          while IFS= read -r line; do
+            [ -z "${line}" ] && continue
+            layer="${line%=*}"; outcome="${line##*=}"
+            if [ "${outcome}" = "success" ]; then
+              echo "  ok      ${layer}"
+            else
+              echo "  FAILED  ${layer} (${outcome})"
+              failed=1
+            fi
+          done <<< "${OUTCOMES}"
+          if [ "${failed}" -ne 0 ]; then
+            echo "::error::at least one layer survived the teardown — resources may still be billing"
+            exit 1
+          fi
+          echo "every layer destroyed."

@@ -20,7 +20,7 @@
 
 resource "aws_s3_bucket" "uc_managed" {
   bucket        = "${local.name}-uc-managed-${local.account_id}"
-  force_destroy = false
+  force_destroy = var.bucket_force_destroy
   tags          = { Name = "${local.name}-uc-managed" }
 }
 

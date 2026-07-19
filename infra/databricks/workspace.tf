@@ -28,7 +28,7 @@ resource "aws_iam_role_policy" "cross_account" {
 # ---- Workspace root (DBFS) bucket -------------------------------------------
 resource "aws_s3_bucket" "root" {
   bucket        = local.root_bucket
-  force_destroy = false
+  force_destroy = var.bucket_force_destroy
   tags          = { Name = local.root_bucket }
 }
 

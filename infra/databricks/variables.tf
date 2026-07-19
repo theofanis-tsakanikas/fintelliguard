@@ -97,3 +97,29 @@ variable "analyst_group_name" {
   type        = string
   default     = "fintelliguard-analysts"
 }
+
+variable "bucket_force_destroy" {
+  description = <<-DESC
+    Whether `terraform destroy` may empty the workspace root (DBFS) and Unity Catalog
+    managed buckets before deleting them.
+
+    Both buckets are VERSIONED. S3 refuses to delete a bucket that still holds objects —
+    and for a versioned bucket, "empty" means every noncurrent version and delete marker
+    too. With `force_destroy = false` the documented teardown is therefore not merely
+    inconvenient, it is IMPOSSIBLE: the first destroy run failed with
+
+        BucketNotEmpty: You must delete all versions in the bucket.
+
+    on both buckets, after the workspace, metastore and catalog had already been deleted —
+    leaving orphaned buckets and, because the destroy job stopped there, the entire
+    `infra/aws` layer (MSK, VPC, NAT) standing and billing.
+
+    Defaulted to `false` deliberately. These buckets hold the lakehouse's managed tables;
+    self-emptying on destroy is a footgun, and a real environment should keep the guard and
+    empty them by a reviewed, deliberate act. `dev.auto.tfvars` sets it true because the dev
+    estate is explicitly disposable — built and torn down on demand — which is a property of
+    that environment, not of the code.
+  DESC
+  type        = bool
+  default     = false
+}

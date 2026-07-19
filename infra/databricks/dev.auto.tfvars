@@ -10,3 +10,9 @@
 # Unity Catalog, cluster policies — is still available. Note it also bills at a higher
 # per-DBU rate, which matters for how long the workspace is left running.
 pricing_tier = "ENTERPRISE"
+
+# The dev estate is built and destroyed on demand, so the versioned root/UC buckets must be
+# emptiable by `terraform destroy`. See `bucket_force_destroy` in variables.tf: the default
+# is false precisely because this is a data-loss switch, and it is turned on HERE — scoped
+# to the throwaway environment — rather than hardcoded into the resource.
+bucket_force_destroy = true
