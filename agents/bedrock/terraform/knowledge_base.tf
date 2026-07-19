@@ -197,27 +197,6 @@ resource "aws_iam_role_policy" "kb_index" {
     Version = "2012-10-17"
     Statement = [
       {
-        # CKV_AWS_290 / CKV_AWS_355: the ENI actions a VPC-attached Lambda needs are not
-        # resource-scopable — the network interface does not exist until Lambda creates it,
-        # so there is no ARN to name. Bounded instead by CONDITION: only ENIs in this VPC.
-        # checkov cannot see that, hence the inline skips, on the resource they except.
-        #checkov:skip=CKV_AWS_290:ENI create/delete cannot name an ARN that does not exist yet; bounded by the ec2:Vpc condition below.
-        #checkov:skip=CKV_AWS_355:Same — Resource "*" is required for ENI management and is constrained by condition, not by ARN.
-        Sid    = "VpcNetworking"
-        Effect = "Allow"
-        Action = [
-          "ec2:CreateNetworkInterface",
-          "ec2:DescribeNetworkInterfaces",
-          "ec2:DeleteNetworkInterface",
-        ]
-        Resource = "*"
-        Condition = {
-          StringEquals = {
-            "ec2:Vpc" = "arn:${local.partition}:ec2:${local.region}:${local.account_id}:vpc/${local.aws.vpc_id}"
-          }
-        }
-      },
-      {
         Sid      = "AossDataPlane"
         Effect   = "Allow"
         Action   = ["aoss:APIAccessAll"]
@@ -237,6 +216,21 @@ resource "aws_iam_role_policy" "kb_index" {
       },
     ]
   })
+}
+
+# The AWS-managed policy for Lambda VPC attachment, rather than hand-rolled ENI
+# permissions. Hand-rolling them failed at CreateFunction:
+#
+#     InvalidParameterValueException: The provided execution role does not have
+#     permissions to call CreateNetworkInterface on EC2
+#
+# because Lambda pre-flight-checks the role, and the `ec2:Vpc` condition added to satisfy
+# checkov cannot be evaluated at that moment — there is no interface, and no VPC context,
+# until the function exists. The managed policy is what Lambda's check expects, and it is
+# also what infra/aws already uses for the action-group Lambda.
+resource "aws_iam_role_policy_attachment" "kb_index_vpc" {
+  role       = aws_iam_role.kb_index.name
+  policy_arn = "arn:${local.partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
 resource "aws_cloudwatch_log_group" "kb_index" {
@@ -290,8 +284,12 @@ resource "aws_lambda_function" "kb_index" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.kb_index, aws_iam_role_policy.kb_index]
-  tags       = { Name = "${local.name}-kb-index" }
+  depends_on = [
+    aws_cloudwatch_log_group.kb_index,
+    aws_iam_role_policy.kb_index,
+    aws_iam_role_policy_attachment.kb_index_vpc,
+  ]
+  tags = { Name = "${local.name}-kb-index" }
 }
 
 # Runs at apply time. The handler is idempotent, so re-applying the layer with the index
