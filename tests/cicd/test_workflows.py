@@ -354,3 +354,88 @@ def test_the_oidc_deploy_role_is_defined_in_terraform_and_sub_scoped():
     assert ":ref:refs/heads/*" not in oidc and "sub:*" not in oidc, (
         "the sub condition is a wildcard — it trusts every branch and every PR"
     )
+
+
+def test_destroy_continues_to_later_layers_when_one_fails():
+    """A teardown must not stop at its first failure — the cost is at the bottom.
+
+    The layer steps ran with the default `if: success()`. When layer 3 failed on two
+    non-empty versioned buckets, step 4 never ran and left the whole `infra/aws` layer —
+    MSK, VPC, NAT gateway — ACTIVE and billing (run 29686453021). The layer that costs the
+    most per hour was protected by the least, and the run reported "failure" for a teardown
+    that had in fact destroyed nothing below the failure point.
+
+    The condition must be SCOPED, not blanket: a bare `always()` would run the teardown even
+    when the typed-confirmation guard REJECTED the request, which inverts the guard.
+    """
+    doc = _load("destroy")
+    steps = doc["jobs"]["destroy"]["steps"]
+    layers = [s for s in steps if re.match(r"^\d+\) ", s.get("name", ""))]
+    assert len(layers) == 4, f"expected 4 teardown layers, found {[s['name'] for s in layers]}"
+
+    for step in layers:
+        condition = step.get("if", "")
+        assert "always()" in condition, (
+            f"{step['name']} runs only if every earlier step succeeded, so one failing layer "
+            "leaves every layer below it standing — and billing"
+        )
+        # The guard must still be able to stop it.
+        assert "steps.guard.outcome == 'success'" in condition, (
+            f"{step['name']} would run even when the typed-confirmation guard rejected the "
+            "request — that is not a guard"
+        )
+        assert "steps.creds.outcome == 'success'" in condition, (
+            f"{step['name']} would run without credentials having been assumed"
+        )
+
+
+def test_destroy_fails_the_job_if_any_layer_survived():
+    """Continuing past a failure must never be mistaken for succeeding through it."""
+    steps = _load("destroy")["jobs"]["destroy"]["steps"]
+    summary = [s for s in steps if "summary" in s.get("name", "").lower()]
+    assert summary, "destroy continues past failures but never reports which layers survived"
+    step = summary[0]
+    assert "exit 1" in step["run"], "the summary reports survivors without failing the job"
+    # The outcomes are interpolated in `env:`, not inline in `run:` — a step that pastes
+    # `${{ steps.x.outcome }}` straight into the script would be reading attacker-free but
+    # still-untrusted expression output at shell level. Search the whole step.
+    rendered = step["run"] + "\n" + "\n".join(str(v) for v in step.get("env", {}).values())
+    for layer in ("bundles", "bedrock", "databricks", "aws"):
+        assert f"steps.{layer}.outcome" in rendered, (
+            f"the teardown summary does not check the {layer} layer, so its failure is silent"
+        )
+
+
+def test_destroy_empties_versioned_buckets_before_terraform_deletes_them():
+    """S3 refuses to delete a versioned bucket that still holds versions or delete markers.
+
+    `force_destroy` does NOT rescue this on a teardown: `terraform destroy` plans from PRIOR
+    STATE and never applies attribute changes, so the provider reads the `force_destroy`
+    recorded in state, not the one in config. Run 29686711080 failed here AFTER
+    `var.bucket_force_destroy` was introduced — which is what proved the mechanism.
+
+    So the teardown must empty them explicitly and not depend on the flag at all.
+    """
+    steps = _load("destroy")["jobs"]["destroy"]["steps"]
+    names = [s.get("name", "") for s in steps]
+    empty_idx = next((i for i, n in enumerate(names) if n.startswith("3a")), None)
+    assert empty_idx is not None, (
+        "nothing empties the versioned buckets, so the databricks layer can only be "
+        "destroyed when state happens to carry force_destroy = true"
+    )
+    layer3_idx = next(i for i, n in enumerate(names) if n.startswith("3) "))
+    assert empty_idx < layer3_idx, "the buckets are emptied after the layer that deletes them"
+
+    script = steps[empty_idx]["run"]
+    # Delete markers are the half everyone forgets: a bucket holding only markers is still
+    # not empty to S3, while `aws s3 ls` shows nothing.
+    assert "DeleteMarkers" in script, (
+        "only object versions are deleted; a bucket left holding delete markers is still "
+        "BucketNotEmpty, and looks empty to `aws s3 ls`"
+    )
+    # Bucket names must come from the state being destroyed — never hardcoded, never a
+    # pattern swept across the account.
+    assert "terraform state list" in script, (
+        "bucket names are not read from the state being destroyed — this step could reach "
+        "buckets this layer does not own"
+    )

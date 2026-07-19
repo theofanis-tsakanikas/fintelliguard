@@ -660,6 +660,38 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_the_kb_role_holds_only_the_permissions_ingestion_needs",
     ),
     Attack(
+        name="teardown-stops-at-the-first-failing-layer",
+        rationale=(
+            "What shipped: the destroy layers ran with the default `if: success()`. Layer 3 "
+            "failed on two non-empty versioned buckets, so layer 4 never ran and left the "
+            "whole infra/aws layer — MSK, VPC, NAT — ACTIVE and billing, on a run that "
+            "reported failure having destroyed nothing below the failure point. The layer "
+            "that costs the most per hour was protected by the least."
+        ),
+        path=".github/workflows/destroy.yml",
+        # Strips `always()` from every layer's condition. What remains still reads like a
+        # careful guard — the confirmation and credential checks are untouched — which is
+        # exactly why the original went unnoticed.
+        old="        if: always() && steps.guard.outcome == 'success'",
+        new="        if: steps.guard.outcome == 'success'",
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_destroy_continues_to_later_layers_when_one_fails",
+    ),
+    Attack(
+        name="teardown-forgets-the-delete-markers",
+        rationale=(
+            "S3 will not delete a bucket holding delete markers, and a bucket holding ONLY "
+            "markers looks empty to `aws s3 ls`. Emptying just `Versions` therefore fails "
+            "with BucketNotEmpty against a bucket that every casual check calls empty — and "
+            "`force_destroy` cannot save it, because destroy reads that flag from state."
+        ),
+        path=".github/workflows/destroy.yml",
+        old="(.Versions // [])[], (.DeleteMarkers // [])[]",
+        new="(.Versions // [])[]",
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_destroy_empties_versioned_buckets_before_terraform_deletes_them",
+    ),
+    Attack(
         name="credentialed-job-trusts-a-movable-tag",
         rationale=(
             "What shipped: `aws-actions/configure-aws-credentials@v4` inside the job that "
