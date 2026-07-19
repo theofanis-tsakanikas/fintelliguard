@@ -187,9 +187,27 @@ jobs:
           terraform init -input=false
           terraform destroy -auto-approve -input=false
 
+      # The base layer, and the ONLY one with an extra condition — because "continue past a
+      # failure" is right for INDEPENDENT layers and wrong for a layer something still
+      # depends on.
+      #
+      # Both `infra/databricks` and `agents/bedrock/terraform` read this layer's outputs
+      # through remote state. Destroying it while either still holds resources removes the
+      # outputs their configurations reference, and Terraform evaluates the whole
+      # configuration to build a DESTROY plan — so those layers stop being plannable at all
+      # and their survivors can never be destroyed. That is not hypothetical: run
+      # 29686711080 tore this layer down while two buckets still stood in infra/databricks,
+      # and wedged that layer across three subsequent runs.
+      #
+      # The earlier rule here was a blanket `always()`, justified by MSK billing while a
+      # teardown sat halted. That reasoning was right about the cost and wrong about the
+      # scope: leaving MSK running for the minutes it takes to fix a failed layer is
+      # recoverable, and the summary step makes it loud. Wedging a layer is not.
       - name: 4) infra/aws
         id: aws
-        if: always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
+        if: >-
+          always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
+          && steps.bedrock.outcome == 'success' && steps.databricks.outcome == 'success'
         working-directory: infra/aws
         run: |
           terraform init -input=false

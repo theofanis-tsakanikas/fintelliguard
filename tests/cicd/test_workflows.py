@@ -388,6 +388,18 @@ def test_destroy_continues_to_later_layers_when_one_fails():
             f"{step['name']} would run without credentials having been assumed"
         )
 
+    # ...but the BASE layer is the exception, and it is not a detail. Both infra/databricks
+    # and agents/bedrock read its outputs through remote state, so destroying it while either
+    # still holds resources leaves those layers unable to plan — and therefore unable to ever
+    # destroy their survivors. Run 29686711080 did exactly that and wedged infra/databricks
+    # across three subsequent runs. Continue past failures, but never past a DEPENDENCY's.
+    base = next(s for s in layers if s["name"].startswith("4) "))
+    for upstream in ("bedrock", "databricks"):
+        assert f"steps.{upstream}.outcome == 'success'" in base["if"], (
+            f"infra/aws is destroyed even when the {upstream} layer failed — that removes "
+            "the remote-state outputs its configuration reads and strands it permanently"
+        )
+
 
 def test_destroy_fails_the_job_if_any_layer_survived():
     """Continuing past a failure must never be mistaken for succeeding through it."""

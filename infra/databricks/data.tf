@@ -42,11 +42,26 @@ locals {
   # a worse first-deploy experience traded for a teardown that cannot deadlock. The deploy
   # workflow already applies infra/aws first, so the null case means someone ran this layer
   # out of order; the deadlock case cost real money.
+  # The fallbacks are SHAPED like real ids on purpose, and `null` was not enough. Providers
+  # validate a resource's arguments from CONFIG, not from state, so a resource that no longer
+  # exists is still argument-checked during a destroy plan:
+  #
+  #     with databricks_mws_networks.this, on workspace.tf line 142
+  #     "vpc_id": one of `gcp_network_info,vpc_id` must be specified
+  #
+  # `null` reads to the provider as "absent" and fails that check, which left the layer just
+  # as unplannable as the raw attribute reference did (run 29687475682). A syntactically
+  # valid, obviously-fake id satisfies validation and is never USED: during teardown nothing
+  # is created, and on a real apply the upstream outputs exist so these never apply.
+  #
+  # They are deliberately unmistakable in a log. If one of these ever reaches an AWS API
+  # call, the request fails naming the literal below — which is the intended outcome, because
+  # it means this layer was applied without infra/aws and should not proceed.
   aws = {
-    vpc_id                      = try(local._aws_remote.vpc_id, null)
-    private_subnet_ids          = try(local._aws_remote.private_subnet_ids, null)
-    databricks_data_plane_sg_id = try(local._aws_remote.databricks_data_plane_sg_id, null)
-    kms_key_arn                 = try(local._aws_remote.kms_key_arn, null)
+    vpc_id                      = try(local._aws_remote.vpc_id, "vpc-upstream-destroyed")
+    private_subnet_ids          = try(local._aws_remote.private_subnet_ids, ["subnet-upstream-destroyed"])
+    databricks_data_plane_sg_id = try(local._aws_remote.databricks_data_plane_sg_id, "sg-upstream-destroyed")
+    kms_key_arn                 = try(local._aws_remote.kms_key_arn, "arn:aws:kms:eu-central-1:000000000000:key/upstream-destroyed")
   }
 
   workspace_name = coalesce(var.workspace_name, local.name)
