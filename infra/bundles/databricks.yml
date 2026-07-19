@@ -43,6 +43,13 @@ variables:
   cases_source_table:
     description: Delta table of resolved fraud cases feeding the case index.
     default: fintelliguard.gold.resolved_cases
+  pipeline_default_schema:
+    description: >-
+      Default schema for DLT tables that do not qualify themselves. Unity Catalog pipelines
+      require this field. Our tables all declare bronze./silver./gold., so this is the
+      fallback rather than the destination.
+    default: bronze
+
   pipeline_continuous:
     description: DLT execution mode — true=continuous (streaming), false=triggered (batch).
     default: false

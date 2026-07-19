@@ -11,6 +11,16 @@ resources:
     medallion:
       name: fintelliguard-medallion
       catalog: ${var.catalog}
+
+      # REQUIRED for a Unity Catalog pipeline — without it the deploy fails with
+      # "The target schema field is required for UC pipelines".
+      #
+      # Every table in `pipelines/` is declared with a qualified name (`bronze.x`,
+      # `silver.x`, `gold.x`), and DLT publishes those to the schema they name, inside
+      # `catalog`. `target` is the DEFAULT for any table that does not qualify itself, so it
+      # does not override the medallion layout CLAUDE.md mandates — it is the fallback the
+      # API insists on having.
+      target: ${var.pipeline_default_schema}
       continuous: ${var.pipeline_continuous}
       development: true
       photon: true
