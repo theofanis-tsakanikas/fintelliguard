@@ -23,9 +23,9 @@ prove the gate catches it). So: the VPC.
 
 No packaging problem
 --------------------
-`botocore` and `urllib3` both ship in the AWS Lambda Python runtime, so signing the request
-by hand costs nothing and avoids vendoring `opensearch-py` into a deployment zip — the
-dependency that made the local-exec brittle in the first place.
+`botocore` ships in the AWS Lambda Python runtime and carries both the SigV4 signer and an
+HTTP session, so signing and sending cost nothing and avoid vendoring `opensearch-py` into
+a deployment zip — the dependency that made the local-exec brittle in the first place.
 """
 
 from __future__ import annotations
@@ -34,9 +34,9 @@ import json
 import os
 import time
 
-import urllib3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
+from botocore.httpsession import URLLib3Session
 from botocore.session import Session
 
 # MUST match `opensearch_serverless_configuration.field_mapping` in knowledge_base.tf.
@@ -59,6 +59,18 @@ INDEX_BODY = {
 
 
 def _signed_put(endpoint: str, index: str, region: str) -> tuple[int, str]:
+    """PUT the index mapping, SigV4-signed for `aoss`.
+
+    Sent with botocore's own HTTP session, deliberately. A SigV4 signature covers the
+    method, the canonical URI, and a specific set of HEADERS including Host — so signing an
+    `AWSRequest` and then re-assembling the call by hand for another HTTP client means the
+    bytes that go out are not quite the bytes that were signed, and the service rejects it
+    with a flat `403 Forbidden` that says nothing about signatures. That is what the first
+    version of this function did, and it cost two deploys: the retry loop below dutifully
+    retried a request that could never succeed.
+
+    `URLLib3Session().send(request.prepare())` transmits exactly what was signed.
+    """
     url = f"{endpoint.rstrip('/')}/{index}"
     body = json.dumps(INDEX_BODY)
 
@@ -70,10 +82,9 @@ def _signed_put(endpoint: str, index: str, region: str) -> tuple[int, str]:
     credentials = Session().get_credentials()
     SigV4Auth(credentials, "aoss", region).add_auth(request)
 
-    response = urllib3.PoolManager().request(
-        "PUT", url, body=body, headers=dict(request.headers), timeout=30.0
-    )
-    return response.status, response.data.decode("utf-8", "replace")
+    response = URLLib3Session(timeout=30).send(request.prepare())
+    payload = response.content or b""
+    return response.status_code, payload.decode("utf-8", "replace")
 
 
 def lambda_handler(event, context):  # noqa: ANN001, ARG001
