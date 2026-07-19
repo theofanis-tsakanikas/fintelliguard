@@ -99,10 +99,30 @@ resource "aws_s3_bucket_policy" "root" {
 }
 
 # ---- Account-level workspace configurations ---------------------------------
+# Databricks validates the cross-account role by ASSUMING it and checking its permissions.
+# Two things have to be true before that call, and neither was guaranteed:
+#
+# 1. The POLICY must be attached. `databricks_mws_credentials` referenced only
+#    `aws_iam_role.cross_account.arn`, so Terraform's implicit dependency was on the role
+#    alone — it was free to run the validation concurrently with attaching the policy, and
+#    validate a role that had no permissions yet.
+# 2. IAM must have PROPAGATED. It is eventually consistent and global; a role that exists
+#    to `GetRole` locally is not necessarily assumable from Databricks' account yet.
+#
+# Deploy run 1 failed exactly here — "Failed credential validation checks: please use a
+# valid cross account IAM role" — 65 seconds after the role was created, with a trust
+# policy that was entirely correct. The config was right; the ordering was not.
+resource "time_sleep" "iam_propagation" {
+  depends_on      = [aws_iam_role.cross_account, aws_iam_role_policy.cross_account]
+  create_duration = "60s"
+}
+
 resource "databricks_mws_credentials" "this" {
   provider         = databricks.account
   credentials_name = "${local.name}-credentials"
   role_arn         = aws_iam_role.cross_account.arn
+
+  depends_on = [time_sleep.iam_propagation]
 }
 
 resource "databricks_mws_storage_configurations" "this" {
