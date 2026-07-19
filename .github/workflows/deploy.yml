@@ -145,9 +145,25 @@ jobs:
             echo "::endgroup::"
           done
 
+      # The workspace host cannot be a hand-pasted secret: the workspace does not exist
+      # until layer 2 applies, and its URL is assigned by Databricks at creation. Pasting it
+      # meant the first deploy could only ever fail, and every later one silently trusted a
+      # value nothing kept in sync with the workspace actually deployed. Read it from the
+      # layer that creates it.
+      - name: Resolve the workspace host from layer 2's output
+        run: |
+          set -euo pipefail
+          host="$(terraform -chdir=infra/databricks output -raw workspace_url)"
+          case "${host}" in https://*) ;; *) host="https://${host}" ;; esac
+          echo "DATABRICKS_HOST=${host}" >> "$GITHUB_ENV"
+          echo "workspace host: ${host}"
+
+      # Authenticates as the SERVICE PRINCIPAL (OAuth M2M), not a PAT. The principal already
+      # exists — the Terraform layers above run as it. A PAT would be a second, longer-lived
+      # credential for the same identity, minted by hand, rotated by nobody.
       - name: 4) infra/bundles (Databricks Asset Bundles)
         working-directory: infra/bundles
         env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: databricks bundle deploy -t ${{ inputs.environment }}

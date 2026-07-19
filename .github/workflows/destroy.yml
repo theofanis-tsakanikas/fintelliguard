@@ -33,8 +33,9 @@ jobs:
     environment: ${{ inputs.environment }}
     env:
       AWS_REGION: eu-central-1
-      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      # No DATABRICKS_HOST / DATABRICKS_TOKEN here: the host is resolved from the layer that
+      # creates the workspace (below), and auth is the service principal's OAuth. A job-level
+      # value would also shadow the resolved one ambiguously.
       TF_VAR_databricks_account_id: ${{ secrets.DATABRICKS_ACCOUNT_ID }}
       TF_VAR_databricks_client_id: ${{ secrets.DATABRICKS_CLIENT_ID }}
       TF_VAR_databricks_client_secret: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
@@ -62,8 +63,23 @@ jobs:
 
       - uses: databricks/setup-cli@dd60b7b133203edca3e8f08b1e053c43a979296e # v1.8.0
 
+      # Read the host BEFORE anything is torn down — step 3 destroys the layer that owns
+      # this output, so resolving it later would read state that no longer describes a
+      # workspace. Same reason as in deploy.yml: the URL is assigned at creation, so it can
+      # never be a hand-pasted secret.
+      - name: Resolve the workspace host from infra/databricks (before teardown)
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/databricks init -input=false
+          host="$(terraform -chdir=infra/databricks output -raw workspace_url)"
+          case "${host}" in https://*) ;; *) host="https://${host}" ;; esac
+          echo "DATABRICKS_HOST=${host}" >> "$GITHUB_ENV"
+
       - name: 1) infra/bundles
         working-directory: infra/bundles
+        env:
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: databricks bundle destroy -t ${{ inputs.environment }} --auto-approve
 
       - name: 2) agents/bedrock/terraform
