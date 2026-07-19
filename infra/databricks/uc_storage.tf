@@ -153,6 +153,17 @@ resource "time_sleep" "uc_iam_propagation" {
     aws_iam_role_policy.uc_storage_kms,
   ]
   create_duration = "60s"
+
+  # `depends_on` alone orders the FIRST create and nothing after it: a sleep that already
+  # exists in state is not re-created when a policy attached to the role changes, so a run
+  # that adds a permission proceeds to validation with no wait at all. Keying `triggers` to
+  # the policy documents makes the wait happen whenever the permissions actually change,
+  # which is the only time it is needed.
+  triggers = {
+    s3_policy  = aws_iam_policy.uc_storage.policy
+    kms_policy = aws_iam_role_policy.uc_storage_kms.policy
+    role_arn   = aws_iam_role.uc_storage.arn
+  }
 }
 
 # ---- Storage credential + external location --------------------------------------------
@@ -178,4 +189,18 @@ resource "databricks_external_location" "uc" {
   credential_name = databricks_storage_credential.uc.id
   comment         = "Managed-table root for the ${var.project} catalog."
   force_destroy   = true
+
+  # The bucket's default encryption is the estate CMK, and Databricks has to be TOLD that.
+  # Undeclared, it writes without naming a key and its own read-back validation of the
+  # location fails — reported as "AWS IAM role does not have LIST, WRITE, DELETE
+  # permissions", which is why deploy runs 6 and 7 both pointed at an IAM policy that
+  # `simulate-principal-policy` confirms is complete (S3 and KMS both `allowed`, no bucket
+  # policy, no conditions on the key's root delegation). The permissions were never the
+  # problem; the encryption declaration was missing.
+  encryption_details {
+    sse_encryption_details {
+      algorithm       = "SSE_KMS"
+      aws_kms_key_arn = local.aws.kms_key_arn
+    }
+  }
 }
