@@ -58,8 +58,11 @@ locals {
   # call, the request fails naming the literal below — which is the intended outcome, because
   # it means this layer was applied without infra/aws and should not proceed.
   aws = {
-    vpc_id                      = try(local._aws_remote.vpc_id, "vpc-upstream-destroyed")
-    private_subnet_ids          = try(local._aws_remote.private_subnet_ids, ["subnet-upstream-destroyed"])
+    vpc_id = try(local._aws_remote.vpc_id, "vpc-upstream-destroyed")
+    # TWO, because the provider enforces a 2-item minimum here (a workspace network spans
+    # availability zones). A single placeholder satisfied the "must be specified" check and
+    # then failed the arity one — "requires 2 item minimum, but config has only 1".
+    private_subnet_ids          = try(local._aws_remote.private_subnet_ids, ["subnet-upstream-destroyed-a", "subnet-upstream-destroyed-b"])
     databricks_data_plane_sg_id = try(local._aws_remote.databricks_data_plane_sg_id, "sg-upstream-destroyed")
     kms_key_arn                 = try(local._aws_remote.kms_key_arn, "arn:aws:kms:eu-central-1:000000000000:key/upstream-destroyed")
   }
