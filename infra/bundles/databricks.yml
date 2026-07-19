@@ -47,6 +47,15 @@ variables:
     description: DLT execution mode — true=continuous (streaming), false=triggered (batch).
     default: false
 
+# The DLT sources live at the REPO ROOT (`pipelines/`), not under this bundle. By default a
+# bundle syncs only files beneath its own root, so referencing them failed with "path ... is
+# not contained in sync root path". `sync.paths` extends the root to cover them — listed
+# explicitly rather than syncing the whole repository.
+sync:
+  paths:
+    - .
+    - ../../pipelines
+
 include:
   - resources/*.yml
 

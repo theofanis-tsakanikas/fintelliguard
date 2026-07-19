@@ -19,11 +19,11 @@ resources:
 
       libraries:
         - file:
-            path: ../../pipelines/bronze/bronze_pipeline.py
+            path: ../../../pipelines/bronze/bronze_pipeline.py
         - file:
-            path: ../../pipelines/silver/silver_pipeline.py
+            path: ../../../pipelines/silver/silver_pipeline.py
         - file:
-            path: ../../pipelines/gold/gold_pipeline.py
+            path: ../../../pipelines/gold/gold_pipeline.py
 
       configuration:
         fintelliguard.catalog: ${var.catalog}
