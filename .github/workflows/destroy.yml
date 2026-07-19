@@ -103,7 +103,27 @@ jobs:
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-        run: databricks bundle destroy -t ${{ inputs.environment }} --auto-approve
+        # A destroy must be idempotent: "there is nothing left to destroy" is SUCCESS. The
+        # bundle lives inside the workspace, so once the workspace is gone the bundle is gone
+        # with it — but `databricks bundle destroy` cannot know that and fails trying to
+        # authenticate against a host that no longer resolves ("cannot configure default
+        # credentials ... host=https://https:"). Reporting that as a surviving layer makes
+        # every re-dispatch permanently red and hides whether anything real is still standing.
+        #
+        # The workspace's existence is read from the state that owns it, not inferred from
+        # the CLI's error text.
+        run: |
+          set -euo pipefail
+          # `init` FIRST and unguarded: without it `state list` fails for want of a backend,
+          # and a failed probe must never be read as "the workspace is gone" — that would
+          # silently skip the teardown of a workspace that is very much still running.
+          terraform -chdir=../../infra/databricks init -input=false >/dev/null
+          if ! terraform -chdir=../../infra/databricks state list \
+              | grep -q '^databricks_mws_workspaces\.'; then
+            echo "workspace already destroyed — the bundle went with it; nothing to do."
+            exit 0
+          fi
+          databricks bundle destroy -t ${{ inputs.environment }} --auto-approve
 
       - name: 2) agents/bedrock/terraform
         id: bedrock
