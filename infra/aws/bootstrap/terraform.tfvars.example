@@ -1,0 +1,20 @@
+# infra/aws/bootstrap — the trust anchor. Run this ONCE, locally, with admin credentials.
+#
+# Creates the Terraform state backend (S3 + DynamoDB) and the GitHub OIDC provider + deploy
+# role. Everything after this authenticates through that role — no static AWS keys anywhere.
+#
+#   cp terraform.tfvars.example terraform.tfvars   &&   terraform init && terraform apply
+
+aws_region = "eu-central-1"
+
+# The OIDC `sub` is pinned to THIS repository. Not a wildcard — a wildcard would let any
+# fork or PR assume the most privileged identity in the system.
+github_repository = "theofanis-tsakanikas/fintelliguard"
+
+# Only workflows on these branches / in these GitHub environments may assume the role.
+deploy_branches     = ["main"]
+deploy_environments = ["dev"]
+
+# An AWS account may hold only ONE OIDC provider per URL. Set false if another stack in
+# this account already created the GitHub provider, and it will be referenced instead.
+create_oidc_provider = true

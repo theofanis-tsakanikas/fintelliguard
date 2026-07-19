@@ -1,0 +1,19 @@
+# agents/bedrock/terraform — layer 3: Bedrock Agent, Knowledge Base, Guardrails, Lambda.
+#
+# ⚠️ COST: this layer creates the OpenSearch Serverless collection, the single most
+# expensive resource in the project (~$0.48-0.96/hour, billed on a minimum OCU floor
+# whether or not you query it). Apply it LAST and destroy it FIRST.
+
+aws_region  = "eu-central-1"
+project     = "fintelliguard"
+environment = "dev"
+
+# The Mosaic AI Model Serving endpoint the Lambda calls for get_fraud_score().
+#
+# Ordering note: that endpoint is created by `infra/bundles` (step 4), which runs AFTER
+# this layer. Leave empty on the first apply, then set it and re-apply once the bundle has
+# deployed — or leave empty and let the Lambda resolve it at runtime from configuration.
+mosaic_endpoint_url = ""
+
+# Dev uses Haiku; switch to Sonnet only for the final evaluation run (cost control).
+# bedrock_model_id = "anthropic.claude-haiku-4-5"

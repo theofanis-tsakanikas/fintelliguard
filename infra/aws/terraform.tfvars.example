@@ -1,0 +1,27 @@
+# infra/aws — layer 1: VPC, KMS, S3, Secrets Manager, (optional) MSK.
+#
+# Nearly everything auto-derives from `project` + `environment`; override only what you
+# must. NEVER put credentials here — this file's real counterpart is gitignored, but
+# secrets belong in Secrets Manager or TF_VAR_ environment variables regardless.
+
+aws_region  = "eu-central-1"
+project     = "fintelliguard"
+environment = "dev"
+
+# --- MSK -----------------------------------------------------------------------------
+# false = use local Kafka (docker) and skip the cluster entirely. Roughly $0.11/hour for
+# 2 x kafka.t3.small when enabled — cheap, but creation takes 15-30 min and deletion
+# another 10-20, which is the real cost while you are still iterating on the deploy.
+# Suggested: false while debugging, true for the final demo run.
+enable_msk = false
+
+# msk_broker_instance_type = "kafka.t3.small"
+# msk_broker_ebs_gb        = 10
+
+# --- Optional overrides ---------------------------------------------------------------
+# raw_bucket_name = ""   # empty = auto-named from project/environment/account
+# vpc_cidr        = "10.20.0.0/16"
+# az_count        = 2
+
+# Set only if you are attaching the Databricks PrivateLink endpoint service.
+# databricks_privatelink_service_name = ""
