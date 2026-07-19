@@ -48,6 +48,26 @@ A clean run shows no schema warnings, only the expected auth error.
 ## Deferred to deploy
 
 `databricks bundle deploy`, the Genie space creation, registering the model/agent versions
-(`fraud_model_version` / `agent_model_version`), populating the resolved-cases table +
-vector index sync, and packaging the `@dlt` modules as a wheel (they use relative imports)
-— all run against a live workspace.
+(`fraud_model_version` / `agent_model_version`), writing the resolved-cases table + vector
+index sync, and packaging the `@dlt` modules as a wheel (they use relative imports) — all
+run against a live workspace.
+
+### The resolved-cases table is SEEDED, and permanently so
+
+`gold.resolved_cases` is written by human analysts closing real investigations — features,
+their notes, the confirmed outcome. Nothing here can produce that, and nothing ever will:
+its content IS the accumulated human judgement. With the table empty the copilot's
+`search_similar_cases` returns nothing and Tier 3 cannot be demonstrated at all, so
+`agents/databricks/cases/seed.py` generates a deterministic **synthetic** fixture from the
+funnel's own archetypes and score bands.
+
+Unlike the regulatory corpus — which was synthetic and got replaced with the verbatim
+EUR-Lex text — these cases can never be replaced. The risk of a retrieved case reading as
+institutional knowledge is therefore permanent, so every row declares itself in three
+places, the load-bearing one being that the disclosure OPENS `case_text`, the column the
+index embeds and returns to the analyst. `tests/agents/databricks/test_case_seed.py`
+enforces it and two `gate_proof` attacks prove the enforcement bites.
+
+Honest framing when presenting this: the feedback loop `resolved_cases -> DELTA_SYNC ->
+index -> search` is wired and demonstrable end to end; it closes for real only when
+connected to a live case-management system.

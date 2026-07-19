@@ -828,6 +828,37 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/ml/governance/test_generate.py",
         must_fail="test_committed_docs_are_up_to_date",
     ),
+    Attack(
+        name="synthetic-cases-stop-declaring-themselves",
+        rationale=(
+            "The Tier-3 case index is seeded with SYNTHETIC resolutions and can never be "
+            "replaced by real ones — there are no real investigations to substitute. So the "
+            "disclosure must open `case_text`, the column Vector Search embeds and returns. "
+            "Demote it to a metadata column and the analyst asks 'have we seen this?', gets "
+            "a confident answer, and has no way to know it was invented."
+        ),
+        path="agents/databricks/cases/seed.py",
+        old="""            DISCLOSURE,
+            "",
+""",
+        new="",
+        gate="tests/agents/databricks/test_case_seed.py",
+        must_fail="test_the_disclosure_survives_truncation_to_a_search_preview",
+    ),
+    Attack(
+        name="seeded-cases-only-ever-confirm-the-model",
+        rationale=(
+            "A case corpus where every outcome is confirmed fraud can only ever agree with "
+            "the flag. The value of 'have we seen this?' is the RATIO — four were fraud, one "
+            "was a traveller — so an all-fraud fixture silently turns the analyst's "
+            "independent check into an echo of the model."
+        ),
+        path="agents/databricks/cases/seed.py",
+        old="        is_fraud = rng.random() < _FRAUD_RATE[archetype]",
+        new="        is_fraud = True",
+        gate="tests/agents/databricks/test_case_seed.py",
+        must_fail="test_every_archetype_carries_both_outcomes",
+    ),
 )
 
 
