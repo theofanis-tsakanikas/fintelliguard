@@ -17,10 +17,35 @@ import sys
 
 from pyspark.sql import SparkSession
 
-# `sync.paths` lists this directory AND ../../../agents, so the sync root is the repository
-# root and the layout in the workspace mirrors the repo. Three levels up from this file is
-# therefore the importable root.
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
+
+def _add_repo_root_to_path() -> None:
+    """Put the synced repository root on `sys.path`.
+
+    NOT via `__file__`: Databricks EXECUTES a `spark_python_task` rather than importing it,
+    so `__file__` is undefined and the first version of this died on `NameError` after the
+    cluster had already spun up — three minutes to learn a one-line fact.
+
+    `sync.paths` lists this directory and ../../../agents, so the sync root is the repo root
+    and the workspace layout mirrors it. Rather than counting parents (which breaks the
+    moment this file moves), find the root by looking for the package that must be there.
+    """
+    starts = []
+    if sys.argv and sys.argv[0]:
+        starts.append(pathlib.Path(sys.argv[0]).resolve().parent)
+    starts.append(pathlib.Path.cwd().resolve())
+
+    for start in starts:
+        for candidate in (start, *start.parents):
+            if (candidate / "agents" / "databricks" / "cases").is_dir():
+                sys.path.insert(0, str(candidate))
+                return
+    raise RuntimeError(
+        f"cannot find the repo root (agents/databricks/cases) from {starts} — "
+        "check `sync.paths` in this bundle"
+    )
+
+
+_add_repo_root_to_path()
 
 from agents.databricks.cases import build_seed_cases, resolved_cases_schema  # noqa: E402
 
