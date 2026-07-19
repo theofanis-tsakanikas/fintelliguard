@@ -87,7 +87,7 @@ fintelliguard/
 
 - Databricks clusters: auto-terminate after 30 min idle (set in cluster config, not manually).
 - AWS MSK: use local Kafka (Docker) in dev. Provision MSK only for integration testing and final demo.
-- Bedrock: use `anthropic.claude-haiku-4-5` in dev. Switch to `anthropic.claude-sonnet-4-6` for final evaluation only.
+- Bedrock: use `anthropic.claude-haiku-4-5-20251001-v1:0` in dev (the bare `anthropic.claude-haiku-4-5` does NOT resolve — Bedrock serves Haiku 4.5 only under its dated id; verify any change with `aws bedrock get-foundation-model`). Switch to `anthropic.claude-sonnet-4-6` for final evaluation only.
 - Always `terraform plan` before `apply`. Never `apply` without reviewing the plan.
 - `terraform destroy` per layer when not actively working.
 

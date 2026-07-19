@@ -9,11 +9,14 @@ project     = "fintelliguard"
 environment = "dev"
 
 # --- MSK -----------------------------------------------------------------------------
-# false = use local Kafka (docker) and skip the cluster entirely. Roughly $0.11/hour for
-# 2 x kafka.t3.small when enabled — cheap, but creation takes 15-30 min and deletion
-# another 10-20, which is the real cost while you are still iterating on the deploy.
-# Suggested: false while debugging, true for the final demo run.
-enable_msk = false
+# true = provision the real managed Kafka cluster, which is what the architecture actually
+# describes. ~$0.11/hour for 2 x kafka.t3.small — cheap next to OpenSearch Serverless.
+#
+# The cost that matters here is TIME, not money: cluster creation takes 15-30 minutes and
+# deletion another 10-20, on every apply/destroy cycle. `false` (local Kafka in docker)
+# keeps those cycles fast while you are still debugging the deploy; `true` is the real
+# thing, and avoids a second deploy later to swap it in.
+enable_msk = true
 
 # msk_broker_instance_type = "kafka.t3.small"
 # msk_broker_ebs_gb        = 10

@@ -17,9 +17,21 @@ variable "environment" {
 }
 
 variable "foundation_model" {
-  description = "Bedrock foundation model id for the agent. Dev uses Claude Haiku 4.5; switch to anthropic.claude-sonnet-4-6 for final evaluation."
+  description = <<-DESC
+    Bedrock foundation model id for the agent. Dev uses Claude Haiku 4.5; switch to
+    anthropic.claude-sonnet-4-6 for final evaluation.
+
+    Must be an id Bedrock actually serves in `aws_region` — verify with:
+        aws bedrock get-foundation-model --region <r> --model-identifier <id>
+
+    This was `anthropic.claude-haiku-4-5`, which does not resolve: Bedrock serves Haiku 4.5
+    only under its dated, versioned id. Some newer models (opus-4-8, sonnet-5, sonnet-4-6)
+    DO take a bare id, which is exactly what makes the inconsistency easy to miss — the
+    shorter form looks right, and the failure surfaces at apply, after every other layer has
+    already been created.
+  DESC
   type        = string
-  default     = "anthropic.claude-haiku-4-5"
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "embedding_model" {
