@@ -6,6 +6,7 @@ key. We do NOT trigger any cloud workflow — this only inspects the files.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -272,15 +273,35 @@ def test_deploy_only_ships_what_ci_validated():
 
 @pytest.mark.parametrize("name", ["ci", *_GATED])
 def test_no_workflow_pins_an_action_to_a_mutable_ref(name):
-    """`@main` is re-resolved every run — a live supply-chain path into a privileged job."""
+    """An action ref must be an immutable commit SHA. Branches AND tags are both mutable.
+
+    ALLOWLIST. The first version asserted `not endswith(("@main", "@master"))` — it
+    blacklisted two spellings of the finding rather than the property being demanded, so
+    every one of these shipped green:
+
+        uses: aws-actions/configure-aws-credentials@v4   # in a job with id-token: write
+        uses: gitleaks/gitleaks-action@v2
+        uses: actions/setup-python@v5
+
+    A git tag is not a version, it is a movable pointer: `git tag -f v4 && git push --force`
+    silently re-aims `@v4` at new code, on the next run, with no diff in this repo. That is
+    the same supply-chain path `@main` opens — the docstring named the mechanism ("re-resolved
+    every run") and then checked for two literal strings instead of the mechanism.
+
+    Demanding 40 hex characters is short. Enumerating every mutable ref spelling is endless.
+    """
     for line in _text(name).splitlines():
         stripped = line.strip()
-        if not stripped.startswith("- uses:") and "uses:" not in stripped:
+        if "uses:" not in stripped:
             continue
         if "./.github/workflows" in stripped:  # a local reusable workflow, not an action
             continue
-        assert not stripped.rstrip().endswith(("@main", "@master")), (
-            f"{name} pins an action to a branch: {stripped}"
+        ref = stripped.split("uses:", 1)[1].split("#", 1)[0].strip()
+        assert "@" in ref, f"{name} uses an action with no ref at all: {stripped}"
+        assert re.fullmatch(r"[0-9a-f]{40}", ref.rsplit("@", 1)[1]), (
+            f"{name} pins an action to a MUTABLE ref: {stripped}\n"
+            "Tags and branches can both be re-pointed at new code without a diff here. "
+            "Pin to the full commit SHA, with the version in a trailing comment."
         )
 
 

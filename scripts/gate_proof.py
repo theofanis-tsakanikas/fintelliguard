@@ -660,6 +660,26 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_the_kb_role_holds_only_the_permissions_ingestion_needs",
     ),
     Attack(
+        name="credentialed-job-trusts-a-movable-tag",
+        rationale=(
+            "What shipped: `aws-actions/configure-aws-credentials@v4` inside the job that "
+            "holds `id-token: write`. The gate meant to stop this asserted only "
+            '`not endswith(("@main", "@master"))` — it blacklisted two spellings instead of '
+            "demanding immutability, so every tag-pinned action passed. A tag is a movable "
+            "pointer: `git tag -f v4 && git push --force` re-aims it at new code with no "
+            "diff in this repo, and that code runs holding credentials to the AWS estate."
+        ),
+        path=".github/workflows/deploy.yml",
+        # Both occurrences (plan + apply job) revert; either one alone is the violation.
+        old=(
+            "aws-actions/configure-aws-credentials"
+            "@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1"
+        ),
+        new="aws-actions/configure-aws-credentials@v4",
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_no_workflow_pins_an_action_to_a_mutable_ref",
+    ),
+    Attack(
         name="kb-open-to-every-principal",
         rationale=(
             'Nothing checked WHO. `Principal = ["*"]` gives every principal in the '
