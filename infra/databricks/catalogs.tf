@@ -7,9 +7,14 @@ resource "databricks_catalog" "fintelliguard" {
   name     = var.project
   comment  = "FintelliGuard lakehouse — medallion catalog."
 
+  # Explicit managed-table root. With no `storage_root` the catalog falls back to the
+  # METASTORE's, which this metastore deliberately does not have — that is what failed
+  # deploy run 5 ("Metastore storage root URL does not exist"). See uc_storage.tf.
+  storage_root = databricks_external_location.uc.url
+
   force_destroy = true
 
-  depends_on = [databricks_metastore_assignment.this]
+  depends_on = [databricks_metastore_assignment.this, databricks_external_location.uc]
 }
 
 resource "databricks_schema" "medallion" {
