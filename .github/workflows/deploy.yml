@@ -161,7 +161,24 @@ jobs:
       # Authenticates as the SERVICE PRINCIPAL (OAuth M2M), not a PAT. The principal already
       # exists — the Terraform layers above run as it. A PAT would be a second, longer-lived
       # credential for the same identity, minted by hand, rotated by nobody.
-      - name: 4) infra/bundles (Databricks Asset Bundles)
+      # 4a) The prerequisite the main bundle cannot express.
+      #
+      # `resources/vector_search.yml` builds a DELTA_SYNC index over `gold.resolved_cases`,
+      # and Databricks refuses to create an index whose source table does not exist. DAB
+      # deploys everything in one pass with no way to say "run this job, then build that
+      # index", so the ordering lives here: seed the table, THEN deploy the bundle that
+      # indexes it.
+      - name: 4a) Seed gold.resolved_cases (prerequisite for the case index)
+        working-directory: infra/bundles/prereq
+        env:
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          databricks bundle deploy -t ${{ inputs.environment }}
+          databricks bundle run -t ${{ inputs.environment }} seed_resolved_cases
+
+      - name: 4b) infra/bundles (Databricks Asset Bundles)
         working-directory: infra/bundles
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}

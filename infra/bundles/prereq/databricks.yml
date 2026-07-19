@@ -1,0 +1,43 @@
+# Prerequisite bundle — data the MAIN bundle's resources depend on existing.
+#
+# `resources/vector_search.yml` builds a DELTA_SYNC index over `gold.resolved_cases`, and
+# Databricks refuses to create an index whose source table does not exist
+# (TABLE_DOES_NOT_EXIST). DAB deploys every resource in one pass and cannot express "run
+# this job first, then build that index", so the ordering lives here instead: this bundle
+# deploys and RUNS, then the main bundle deploys.
+#
+# Kept deliberately small. It is not a second home for resources — it is the one job that
+# has to have finished before the main bundle is coherent.
+
+bundle:
+  name: fintelliguard-prereq
+
+sync:
+  paths:
+    - .
+    - ../../../agents
+
+targets:
+  dev:
+    mode: development
+    default: true
+
+resources:
+  jobs:
+    seed_resolved_cases:
+      name: fintelliguard-seed-resolved-cases
+
+      tasks:
+        - task_key: seed
+          spark_python_task:
+            python_file: ./seed_resolved_cases.py
+          new_cluster:
+            spark_version: 15.4.x-scala2.12
+            node_type_id: m5d.large
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.master: "local[*]"
+              spark.databricks.cluster.profile: singleNode
+            custom_tags:
+              ResourceClass: SingleNode
