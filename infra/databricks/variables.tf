@@ -63,7 +63,7 @@ variable "workspace_security_group_ids" {
 }
 
 variable "pricing_tier" {
-  description = "Workspace pricing tier. PREMIUM is required for Unity Catalog + cluster policies."
+  description = "Workspace pricing tier. PREMIUM is the minimum for Unity Catalog + cluster policies, but availability is a property of the Databricks SUBSCRIPTION — an account may offer only ENTERPRISE, and requesting an unavailable tier fails workspace creation. Set per deployment in dev.auto.tfvars."
   type        = string
   default     = "PREMIUM"
 }
