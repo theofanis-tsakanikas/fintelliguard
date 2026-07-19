@@ -129,7 +129,18 @@ resource "aws_opensearchserverless_access_policy" "kb" {
         ResourceType = "index"
       },
     ]
-    Principal = [aws_iam_role.kb.arn]
+    # Two principals, for two different jobs:
+    #  - the KB ingestion role, which reads and writes documents at run time;
+    #  - the DEPLOYING identity, which has to CREATE the index in the first place.
+    #
+    # Only the first was listed, so `create_kb_index.py` — running as the deploy role —
+    # was in no data access policy at all and AOSS rejected it with `401, ''`. Nothing in
+    # that message points at the access policy, and the IAM policy on the deploy role is
+    # irrelevant here: AOSS authorises the data plane through ITS OWN policy, not IAM.
+    Principal = [
+      aws_iam_role.kb.arn,
+      data.aws_iam_session_context.current.issuer_arn,
+    ]
   }])
 }
 

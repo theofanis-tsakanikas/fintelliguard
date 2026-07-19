@@ -12,6 +12,14 @@ data "terraform_remote_state" "aws" {
 
 data "aws_caller_identity" "current" {}
 
+# The identity actually running `terraform apply`, resolved from the assumed-role SESSION
+# arn (`.../assumed-role/<role>/<session>`) to the underlying ROLE arn. An AOSS data access
+# policy matches on the role, so the session form never matches and the principal is simply
+# absent from every policy — which AOSS answers with a bare 401.
+data "aws_iam_session_context" "current" {
+  arn = data.aws_caller_identity.current.arn
+}
+
 data "aws_partition" "current" {}
 
 data "aws_region" "current" {}

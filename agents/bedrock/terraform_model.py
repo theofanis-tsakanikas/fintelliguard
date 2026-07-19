@@ -58,14 +58,24 @@ class Reference:
 class TerraformModel:
     """The parsed resource graph of a Terraform directory."""
 
-    def __init__(self, resources: dict[tuple[str, str], dict[str, Any]]):
+    def __init__(
+        self,
+        resources: dict[tuple[str, str], dict[str, Any]],
+        data_sources: dict[tuple[str, str], dict[str, Any]] | None = None,
+    ):
         self._resources = resources
+        # Data sources are declarations too. A policy may legitimately name
+        # `data.aws_iam_session_context.current.issuer_arn` as a principal, and a model that
+        # only knows `resource` blocks calls that a DANGLING reference — failing a test whose
+        # point is to catch dangling references, on one that resolves perfectly well.
+        self._data_sources = data_sources or {}
 
     # -- construction ------------------------------------------------------- #
 
     @classmethod
     def from_dir(cls, directory: Path) -> TerraformModel:
         resources: dict[tuple[str, str], dict[str, Any]] = {}
+        data_sources: dict[tuple[str, str], dict[str, Any]] = {}
         tf_files = sorted(directory.glob("*.tf"))
         if not tf_files:
             raise FileNotFoundError(f"no .tf files in {directory}")
@@ -76,7 +86,11 @@ class TerraformModel:
                 for rtype, bodies in block.items():
                     for rname, body in bodies.items():
                         resources[(rtype, rname)] = body
-        return cls(resources)
+            for block in parsed.get("data", []):
+                for dtype, bodies in block.items():
+                    for dname, body in bodies.items():
+                        data_sources[(dtype, dname)] = body
+        return cls(resources, data_sources)
 
     # -- queries ------------------------------------------------------------ #
 
@@ -93,11 +107,17 @@ class TerraformModel:
         return matches[0][1]
 
     def exists(self, ref: Reference) -> bool:
+        if ref.type == "data":
+            # `${data.<type>.<name>...}` parses as type="data", name="<type>"; the actual
+            # name sits one segment further, so match on the data TYPE alone.
+            return any(dtype == ref.name for dtype, _ in self._data_sources)
         return (ref.type, ref.name) in self._resources
 
     @property
     def addresses(self) -> set[str]:
-        return {f"{t}.{n}" for t, n in self._resources}
+        return {f"{t}.{n}" for t, n in self._resources} | {
+            f"data.{t}.{n}" for t, n in self._data_sources
+        }
 
     # -- reference resolution ----------------------------------------------- #
 

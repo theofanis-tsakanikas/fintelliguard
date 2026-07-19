@@ -110,7 +110,16 @@ def test_the_kb_data_policy_names_a_principal_and_a_scoped_resource(model):
         for principal in principals:
             assert principal != "*", "the KB data policy grants to EVERY principal in the account"
             ref = model.resolve(principal)
-            assert ref.type == "aws_iam_role", f"{ref.address} is not an IAM role"
+            # A principal must be a NAMED IAM role — either one this layer declares, or the
+            # deploying identity resolved from its assumed-role session
+            # (`aws_iam_session_context.issuer_arn`, which yields exactly a role arn). The
+            # deployer has to be here: AOSS authorises the data plane through this policy and
+            # not through IAM, so the identity that creates the vector index is rejected with
+            # a bare 401 unless it is named. What stays banned is a wildcard or a principal
+            # that is not a role at all.
+            assert ref.type == "aws_iam_role" or ref.name == "aws_iam_session_context", (
+                f"{ref.address} is neither a declared IAM role nor the resolved deployer"
+            )
 
         for entry in rule["Rules"]:
             for resource in entry["Resource"]:
