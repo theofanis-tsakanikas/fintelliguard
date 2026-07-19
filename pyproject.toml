@@ -26,7 +26,7 @@ dev = [
     # budget are per-PROCESS, so a crash — the exact scenario durability is for — hands the
     # agent a fresh budget, and `build_checkpointer`'s promise to "fail loud rather than
     # fall back to an in-memory saver" was false: the next line returned InMemorySaver.
-    "langgraph-checkpoint-sqlite==3.1.0",
+    "langgraph-checkpoint-sqlite==3.0.3",
     # dashboards/ provisioning YAML tests.
     "pyyaml==6.0.3",
     # Parses the Bedrock Terraform into a resource graph so the guardrail tests can check
