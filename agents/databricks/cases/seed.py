@@ -166,9 +166,19 @@ def _decision(score: float) -> str:
     return decision_hint(score, ScoringConfig())
 
 
-def _case_text(*, case_id: str, card_hash: str, event_time: datetime, score: float,
-               decision: str, drivers: tuple[str, ...], archetype: FraudPattern,
-               note: str, disposition: str, outcome: str) -> str:
+def _case_text(
+    *,
+    case_id: str,
+    card_hash: str,
+    event_time: datetime,
+    score: float,
+    decision: str,
+    drivers: tuple[str, ...],
+    archetype: FraudPattern,
+    note: str,
+    disposition: str,
+    outcome: str,
+) -> str:
     """The embedded column. Opens with the disclosure — see the module docstring."""
     return "\n".join(
         [
@@ -219,8 +229,13 @@ def build_seed_cases(*, count: int = 60, seed: int = 42) -> tuple[ResolvedCase, 
 
         template = (_FRAUD_NOTE if is_fraud else _LEGIT_NOTE)[archetype]
         note = template.format(
-            amount=amount, mean=mean, velocity=velocity, merchants=merchants,
-            age=age, gap=gap, hour=hour,
+            amount=amount,
+            mean=mean,
+            velocity=velocity,
+            merchants=merchants,
+            age=age,
+            gap=gap,
+            hour=hour,
         )
 
         if is_fraud:
@@ -253,9 +268,16 @@ def build_seed_cases(*, count: int = 60, seed: int = 42) -> tuple[ResolvedCase, 
                 disposition=disposition,
                 outcome=outcome,
                 case_text=_case_text(
-                    case_id=case_id, card_hash=card_hash, event_time=event_time,
-                    score=score, decision=decision, drivers=drivers, archetype=archetype,
-                    note=note, disposition=disposition, outcome=outcome,
+                    case_id=case_id,
+                    card_hash=card_hash,
+                    event_time=event_time,
+                    score=score,
+                    decision=decision,
+                    drivers=drivers,
+                    archetype=archetype,
+                    note=note,
+                    disposition=disposition,
+                    outcome=outcome,
                 ),
                 provenance=PROVENANCE,
             )

@@ -146,9 +146,7 @@ _ARTICLE_TAIL = re.compile(r"^[\s.:]*((?:\d+[a-z]?)(?:\s*(?:[-–—,;]|and|to|&
 # instrument in front of it INHERITS the last one seen, so "PSD2 Art. 97 and RTS Art. 18"
 # grounded as `(PSD2, ART.18)`: a pair the verdict never cited, checked against a
 # provision that means something else. Naming the instrument makes the pair honest.
-_INSTRUMENT = re.compile(
-    r"\b(PSD\d?|AMLD\d?|GDPR|MiFID(?:\s*II)?|EBA|MLR|RTS)\b", re.IGNORECASE
-)
+_INSTRUMENT = re.compile(r"\b(PSD\d?|AMLD\d?|GDPR|MiFID(?:\s*II)?|EBA|MLR|RTS)\b", re.IGNORECASE)
 
 # A guideline reference: "GL 2021/03".
 _GUIDELINE = re.compile(r"\bGL\s*(\d{4}/\d+)\b", re.IGNORECASE)
