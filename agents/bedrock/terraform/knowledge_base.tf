@@ -256,7 +256,11 @@ resource "aws_lambda_function" "kb_index" {
   filename      = data.archive_file.kb_index.output_path
 
   source_code_hash = data.archive_file.kb_index.output_base64sha256
-  timeout          = 60
+
+  # Covers the handler's 403 retry budget (~50s of backoff across 6 attempts) plus the
+  # requests themselves. A 60s timeout would have killed the retry that exists to survive
+  # AOSS policy propagation.
+  timeout = 120
 
   # One invocation per apply — a concurrency of 1 is not a throttle, it is a statement that
   # two of these must never race to create the same index.

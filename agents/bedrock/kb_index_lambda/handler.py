@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 import urllib3
 from botocore.auth import SigV4Auth
@@ -80,12 +81,27 @@ def lambda_handler(event, context):  # noqa: ANN001, ARG001
     index = os.environ["INDEX_NAME"]
     region = os.environ.get("AWS_REGION", "eu-central-1")
 
-    status, payload = _signed_put(endpoint, index, region)
+    # AOSS data access policies are eventually consistent, and this Lambda is invoked in the
+    # same apply that grants its role. The first attempt therefore raced the grant and came
+    # back `403 Forbidden` against a policy that — checked live, moments later — already
+    # named the role and already carried `aoss:CreateIndex`.
+    #
+    # Retrying rather than sleeping a fixed amount: the delay is not a known quantity, and a
+    # constant long enough to be safe is a constant wasted on every run that did not need it.
+    # 403 is the only retryable status here — 401 means the network path is wrong (see the
+    # module docstring) and no amount of waiting fixes it.
+    status, payload = 0, ""
+    for attempt in range(6):
+        if attempt:
+            time.sleep(min(2**attempt, 20))
+        status, payload = _signed_put(endpoint, index, region)
 
-    # Idempotent: re-applying the layer must not fail because the index survived.
-    if status in (200, 201):
-        return {"created": True, "index": index, "status": status}
-    if "resource_already_exists_exception" in payload:
-        return {"created": False, "index": index, "status": status, "note": "already exists"}
+        if status in (200, 201):
+            return {"created": True, "index": index, "status": status, "attempts": attempt + 1}
+        # Idempotent: re-applying the layer must not fail because the index survived.
+        if "resource_already_exists_exception" in payload:
+            return {"created": False, "index": index, "note": "already exists"}
+        if status != 403:
+            break
 
     raise RuntimeError(f"creating index {index!r} failed: HTTP {status}: {payload[:800]}")
