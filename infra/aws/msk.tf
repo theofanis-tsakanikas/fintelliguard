@@ -42,5 +42,31 @@ resource "aws_msk_cluster" "this" {
     }
   }
 
+  # Broker logs to CloudWatch (CKV_AWS_80). Without this the cluster carries the whole
+  # transaction stream and keeps no record of who connected, what was rejected, or why a
+  # broker restarted — so a Kafka-side incident is unreconstructable, and the platform that
+  # exists to produce an audit trail has a blind spot at its own ingestion boundary.
+  #
+  # Encrypted with the same CMK as everything else, and retained for the same window as the
+  # VPC flow logs so a single incident lookback covers both network and broker evidence.
+  logging_info {
+    broker_logs {
+      cloudwatch_logs {
+        enabled   = true
+        log_group = aws_cloudwatch_log_group.msk_broker[0].name
+      }
+    }
+  }
+
   tags = { Name = local.msk_cluster_name }
+}
+
+resource "aws_cloudwatch_log_group" "msk_broker" {
+  count = var.enable_msk ? 1 : 0
+
+  name              = "/aws/msk/${local.name}/broker-logs"
+  retention_in_days = var.flow_log_retention_days
+  kms_key_id        = aws_kms_key.main.arn
+
+  tags = { Name = "${local.name}-msk-broker-logs" }
 }
