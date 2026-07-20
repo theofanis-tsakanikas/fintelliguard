@@ -104,13 +104,30 @@ aws s3 cp ieee-cis/ s3://fintelliguard-raw/raw/ieee-cis/ --recursive
 ```
 Then complete step 4's Lambda wiring (`mosaic_endpoint_url`).
 
-### 7. Knowledge Base ingestion
-Upload the regulatory corpus and sync the Bedrock KB data source.
+### 7. Knowledge Base ingestion — automatic, and deliberately not a copy command
+
+The deploy workflow does this; there is nothing to run by hand.
+
 ```bash
-aws s3 cp agents/bedrock/kb/corpus/ s3://<kb-docs-bucket>/ --recursive
-aws bedrock-agent start-ingestion-job \
-  --knowledge-base-id <kb-id> --data-source-id <ds-id> --region eu-central-1
+python -m agents.bedrock.kb.ingest \
+  --bucket <kb-docs-bucket> --knowledge-base-id <kb-id> --data-source-id <ds-id>
 ```
+
+This section used to read `aws s3 cp agents/bedrock/kb/corpus/ s3://<bucket>/ --recursive`,
+and that was wrong twice over:
+
+* **Nothing ran it.** A health check on a freshly deployed estate found the Knowledge Base
+  `ACTIVE` with zero objects and zero ingestion jobs. Tier 2 grounds every verdict in
+  retrieved regulatory text and there was none — while CLAUDE.md says *IaC only, no console
+  deployments, ever*.
+* **It bypassed the screen.** `docs/governance/AI_ACT_ANNEX_IV.md` states as regulated fact
+  that the corpus is screened at ingestion by `screen_document()`. A raw `s3 cp` never calls
+  it, so the one path that actually loaded documents went around the control the compliance
+  document asserts. The module above uploads the *screened* text — not the files on disk —
+  so there is no unscreened copy to upload.
+
+`tests/agents/bedrock/test_kb_ingest.py` fails if the workflow ever copies the corpus
+directly again, and gate_proof plants that exact bypass to prove the test can catch it.
 
 ### 8. Grafana — provisioning + dashboards
 Set the data source env refs (no secrets in YAML), then load provisioning + JSON.

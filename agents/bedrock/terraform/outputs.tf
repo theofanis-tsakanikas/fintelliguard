@@ -23,6 +23,16 @@ output "knowledge_base_id" {
   value       = aws_bedrockagent_knowledge_base.this.id
 }
 
+output "data_source_id" {
+  description = <<-DESC
+    Id of the S3 data source the corpus is ingested through. Needed by
+    `python -m agents.bedrock.kb.ingest`, which starts and waits on the ingestion job:
+    `start_ingestion_job` takes the data source id, not the bucket, and it was the one
+    identifier the deploy could not resolve without a console visit.
+  DESC
+  value       = aws_bedrockagent_data_source.regulations.data_source_id
+}
+
 output "vector_collection_arn" {
   description = "OpenSearch Serverless vector collection ARN."
   value       = aws_opensearchserverless_collection.kb.arn

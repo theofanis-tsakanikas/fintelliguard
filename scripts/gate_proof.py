@@ -674,6 +674,22 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="corpus-uploaded-around-the-screen",
+        rationale=(
+            "What shipped: the ONLY documented way to load the corpus was a manual "
+            "`aws s3 cp --recursive` that no CI step ran and that never calls "
+            "screen_document(). The KB was found ACTIVE and empty. Meanwhile the EU-AI-Act "
+            "document states as regulated fact that the corpus is screened at ingestion — a "
+            "control that existed, was tested, was attacked here, and sat on the wrong side "
+            "of the door. This restores the bypass."
+        ),
+        path=".github/workflows/deploy.yml",
+        old="          python -m agents.bedrock.kb.ingest \\",
+        new='          aws s3 cp agents/bedrock/kb/corpus/ "s3://${bucket}" --recursive \\',
+        gate="tests/agents/bedrock/test_kb_ingest.py",
+        must_fail="test_the_deploy_loads_the_corpus_through_the_screening_module",
+    ),
+    Attack(
         name="secret-purge-reaches-live-secrets",
         rationale=(
             "The purge step exists because a secret scheduled for deletion still owns its "

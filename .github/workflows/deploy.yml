@@ -120,6 +120,14 @@ jobs:
 
       - uses: databricks/setup-cli@dd60b7b133203edca3e8f08b1e053c43a979296e # v1.8.0
 
+      # Pinned to the version the gates run on. The corpus loader further down is repo code,
+      # so leaving it to whatever interpreter the runner image happens to ship would mean the
+      # deploy executes a Python that CI never validated against.
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
       # PER-LAYER plan -> apply, in dependency order. Each layer's plan is computed AFTER
       # the layer it depends on has applied, which is the only order that can work: layers 2
       # and 3 read layer 1's remote-state outputs, and those do not exist until layer 1 runs.
@@ -176,6 +184,33 @@ jobs:
             rm -f "${dir}/tfplan"
             echo "::endgroup::"
           done
+
+      # Bedrock creates the Knowledge Base, the bucket and the data source — and leaves all
+      # three EMPTY. Terraform has no resource for "the documents", so without this step a
+      # deploy finishes with the KB `ACTIVE` and zero objects in it, which is precisely what
+      # a post-deploy health check found. Tier 2 grounds every verdict in retrieved
+      # regulatory text; there was none to retrieve.
+      #
+      # `docs/DEPLOY.md` used to carry this as a manual `aws s3 cp ... --recursive`, against
+      # CLAUDE.md's "IaC only. No console deployments, ever." Worse, that command bypasses
+      # `screen_document()` entirely, while `docs/governance/AI_ACT_ANNEX_IV.md` states as
+      # regulated fact that the corpus IS screened at ingestion. The module below is the only
+      # loader now, and it uploads the SCREENED text rather than the files on disk — a screen
+      # you can walk around by using a different upload command is not a control.
+      #
+      # Ids come from the layer that owns them, never pasted.
+      - name: Load the regulatory corpus into the Knowledge Base (screened)
+        run: |
+          set -euo pipefail
+          cd agents/bedrock/terraform
+          bucket="$(terraform output -raw kb_docs_bucket)"
+          kb="$(terraform output -raw knowledge_base_id)"
+          ds="$(terraform output -raw data_source_id)"
+          cd "$GITHUB_WORKSPACE"
+          python -m pip install --quiet boto3
+          python -m agents.bedrock.kb.ingest \
+            --bucket "${bucket}" --knowledge-base-id "${kb}" --data-source-id "${ds}" \
+            --region "${AWS_REGION}"
 
       # The workspace host cannot be a hand-pasted secret: the workspace does not exist
       # until layer 2 applies, and its URL is assigned by Databricks at creation. Pasting it
