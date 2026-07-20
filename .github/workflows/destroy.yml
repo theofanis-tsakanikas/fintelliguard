@@ -125,6 +125,17 @@ jobs:
           fi
           databricks bundle destroy -t ${{ inputs.environment }} --auto-approve
 
+      # Every layer that owns S3 buckets is emptied immediately before it is destroyed.
+      # This used to exist for infra/databricks ONLY, which is where the failure was first
+      # seen — and the identical trap was sitting on the other two layers unnoticed:
+      # `infra/aws` holds 651 MB of IEEE-CIS training data and `agents/bedrock` holds the
+      # regulatory corpus, neither declaring force_destroy. A fix applied to the one layer
+      # that failed, rather than to the property that failed, is how the second and third
+      # instances stay hidden until they cost another teardown each.
+      - name: 2a) Empty the buckets agents/bedrock/terraform owns
+        if: always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
+        run: ./scripts/empty_layer_buckets.sh agents/bedrock/terraform
+
       - name: 2) agents/bedrock/terraform
         id: bedrock
         if: always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
@@ -133,51 +144,9 @@ jobs:
           terraform init -input=false
           terraform destroy -auto-approve -input=false
 
-      # A versioned bucket cannot be deleted while any object version or delete marker
-      # remains, and `force_destroy` does NOT rescue this on a teardown: `terraform destroy`
-      # builds its plan from PRIOR STATE and never applies attribute changes, so the
-      # provider's delete reads the `force_destroy` recorded in state — not the value in
-      # config. Flipping `var.bucket_force_destroy` to true therefore fixes the NEXT
-      # build-then-destroy cycle (deploy writes it into state) and does nothing for an estate
-      # already recorded with false. Runs 29686453021 and 29686711080 both failed here, the
-      # second one AFTER the variable was introduced, which is what proved the mechanism.
-      #
-      # So the teardown does not depend on the flag at all. Emptying the buckets explicitly
-      # is deterministic, needs no state surgery, and works whichever value state happens to
-      # hold. Bucket names come from the state Terraform is about to destroy — never
-      # hardcoded, never pattern-matched against the account, so this can only ever touch
-      # buckets this layer owns.
-      - name: 3a) Empty the versioned buckets this layer owns
+      - name: 3a) Empty the buckets infra/databricks owns
         if: always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
-        working-directory: infra/databricks
-        run: |
-          set -uo pipefail
-          terraform init -input=false
-          for addr in $(terraform state list 2>/dev/null | grep -E '^aws_s3_bucket\.' || true); do
-            name="$(terraform state show -no-color "${addr}" \
-              | awk -F'"' '/^[[:space:]]+bucket[[:space:]]+=/ {print $2; exit}')"
-            [ -z "${name}" ] && continue
-            echo "emptying ${addr} -> ${name}"
-            # Paginated: list-object-versions caps at 1000 keys, so one pass silently leaves
-            # the rest behind on any bucket that outgrew that — and the delete then fails for
-            # a reason the log would attribute to permissions.
-            while :; do
-              raw="$(aws s3api list-object-versions --bucket "${name}" --max-keys 1000 \
-                --output json 2>/dev/null || echo '{}')"
-              # BOTH lists matter. `Versions` alone leaves the DELETE MARKERS behind, and a
-              # bucket holding only delete markers is still not empty as far as S3 is
-              # concerned — the delete would keep failing with BucketNotEmpty on a bucket
-              # that looks empty to `aws s3 ls`.
-              objects="$(echo "${raw}" \
-                | jq -c '[(.Versions // [])[], (.DeleteMarkers // [])[] | {Key, VersionId}]')"
-              count="$(echo "${objects}" | jq 'length')"
-              [ "${count}" = "0" ] && break
-              jq -n --argjson o "${objects}" '{Objects: $o, Quiet: true}' > /tmp/del.json
-              aws s3api delete-objects --bucket "${name}" --delete file:///tmp/del.json >/dev/null
-              echo "  deleted ${count} version(s)/marker(s)"
-            done
-          done
-          echo "buckets emptied."
+        run: ./scripts/empty_layer_buckets.sh infra/databricks
 
       - name: 3) infra/databricks
         id: databricks
@@ -203,6 +172,12 @@ jobs:
       # teardown sat halted. That reasoning was right about the cost and wrong about the
       # scope: leaving MSK running for the minutes it takes to fix a failed layer is
       # recoverable, and the summary step makes it loud. Wedging a layer is not.
+      - name: 4a) Empty the buckets infra/aws owns
+        if: >-
+          always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
+          && steps.bedrock.outcome == 'success' && steps.databricks.outcome == 'success'
+        run: ./scripts/empty_layer_buckets.sh infra/aws
+
       - name: 4) infra/aws
         id: aws
         if: >-

@@ -418,38 +418,65 @@ def test_destroy_fails_the_job_if_any_layer_survived():
         )
 
 
-def test_destroy_empties_versioned_buckets_before_terraform_deletes_them():
-    """S3 refuses to delete a versioned bucket that still holds versions or delete markers.
+def test_every_layer_that_owns_buckets_is_emptied_before_it_is_destroyed():
+    """S3 refuses to delete a bucket that still holds objects, and `force_destroy` cannot
+    rescue a teardown: `terraform destroy` plans from PRIOR STATE and never applies attribute
+    changes, so the provider reads the flag recorded in state rather than the one in config.
 
-    `force_destroy` does NOT rescue this on a teardown: `terraform destroy` plans from PRIOR
-    STATE and never applies attribute changes, so the provider reads the `force_destroy`
-    recorded in state, not the one in config. Run 29686711080 failed here AFTER
-    `var.bucket_force_destroy` was introduced — which is what proved the mechanism.
+    The first version of this guard checked ONE layer — infra/databricks, the one that had
+    failed. The identical trap was already waiting on `infra/aws` (651 MB of IEEE-CIS data)
+    and `agents/bedrock` (the regulatory corpus), neither declaring force_destroy. Fixing the
+    instance instead of the property is how the second and third copies stay hidden until
+    they each cost a teardown.
 
-    So the teardown must empty them explicitly and not depend on the flag at all.
+    So this asserts the PROPERTY: every Terraform layer the destroy tears down is preceded by
+    an emptying step for that same layer.
     """
     steps = _load("destroy")["jobs"]["destroy"]["steps"]
     names = [s.get("name", "") for s in steps]
-    empty_idx = next((i for i, n in enumerate(names) if n.startswith("3a")), None)
-    assert empty_idx is not None, (
-        "nothing empties the versioned buckets, so the databricks layer can only be "
-        "destroyed when state happens to carry force_destroy = true"
-    )
-    layer3_idx = next(i for i, n in enumerate(names) if n.startswith("3) "))
-    assert empty_idx < layer3_idx, "the buckets are emptied after the layer that deletes them"
 
-    script = steps[empty_idx]["run"]
-    # Delete markers are the half everyone forgets: a bucket holding only markers is still
-    # not empty to S3, while `aws s3 ls` shows nothing.
-    assert "DeleteMarkers" in script, (
-        "only object versions are deleted; a bucket left holding delete markers is still "
-        "BucketNotEmpty, and looks empty to `aws s3 ls`"
+    layers = {
+        "2) agents/bedrock/terraform": "agents/bedrock/terraform",
+        "3) infra/databricks": "infra/databricks",
+        "4) infra/aws": "infra/aws",
+    }
+    for step_name, layer in layers.items():
+        destroy_at = next((i for i, n in enumerate(names) if n == step_name), None)
+        assert destroy_at is not None, f"the destroy no longer has a step '{step_name}'"
+
+        empty_at = next(
+            (
+                i
+                for i, s in enumerate(steps)
+                if "Empty the buckets" in s.get("name", "") and layer in s.get("run", "")
+            ),
+            None,
+        )
+        assert empty_at is not None, (
+            f"nothing empties the buckets owned by {layer}, so its destroy fails with "
+            "BucketNotEmpty on anything it holds"
+        )
+        assert empty_at < destroy_at, (
+            f"{layer} is emptied AFTER it is destroyed, which is no ordering at all"
+        )
+
+
+def test_the_bucket_emptying_handles_delete_markers_and_pagination():
+    """Two halves that are easy to leave out, each silent when missing.
+
+    A bucket holding only DELETE MARKERS is still BucketNotEmpty while `aws s3 ls` shows
+    nothing. And `list-object-versions` caps at 1000 keys, so one pass quietly leaves the rest
+    on any bucket that outgrew that — the delete then fails for a reason the log reads as
+    permissions.
+    """
+    script = (Path(__file__).resolve().parents[2] / "scripts/empty_layer_buckets.sh").read_text(
+        "utf-8"
     )
-    # Bucket names must come from the state being destroyed — never hardcoded, never a
-    # pattern swept across the account.
-    assert "terraform state list" in script, (
-        "bucket names are not read from the state being destroyed — this step could reach "
-        "buckets this layer does not own"
+    assert "DeleteMarkers" in script, "only object versions are deleted; markers would remain"
+    assert "max-keys" in script and "while" in script, "the version listing is not paginated"
+    assert "terraform" in script and "state list" in script, (
+        "bucket names are not read from the state being destroyed — this could reach buckets "
+        "the layer does not own"
     )
 
 

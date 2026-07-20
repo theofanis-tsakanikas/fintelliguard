@@ -57,6 +57,10 @@ COPY = (
     "pyproject.toml",
     ".github",
     "infra",
+    # The teardown helpers the workflows call. Without this, a gate that reads
+    # `scripts/empty_layer_buckets.sh` fails on the COPY for want of the file — which
+    # gate_proof correctly refuses to score, since a red baseline proves nothing.
+    "scripts",
     # The committed regulated docs, so `ml.governance.generate --check` has something to
     # diff against: the freshness gate only has teeth if a code mutation can make the staged
     # docs go stale relative to the staged code.
@@ -800,11 +804,25 @@ ATTACKS: tuple[Attack, ...] = (
             "with BucketNotEmpty against a bucket that every casual check calls empty — and "
             "`force_destroy` cannot save it, because destroy reads that flag from state."
         ),
-        path=".github/workflows/destroy.yml",
-        old="(.Versions // [])[], (.DeleteMarkers // [])[]",
-        new="(.Versions // [])[]",
+        path="scripts/empty_layer_buckets.sh",
+        old="[(.Versions // [])[], (.DeleteMarkers // [])[] | {Key, VersionId}]",
+        new="[(.Versions // [])[] | {Key, VersionId}]",
         gate="tests/cicd/test_workflows.py",
-        must_fail="test_destroy_empties_versioned_buckets_before_terraform_deletes_them",
+        must_fail="test_the_bucket_emptying_handles_delete_markers_and_pagination",
+    ),
+    Attack(
+        name="one-layer-destroyed-without-emptying-its-buckets",
+        rationale=(
+            "The emptying step existed for infra/databricks only — the layer that had "
+            "failed. infra/aws holds 651 MB of IEEE-CIS data and agents/bedrock holds the "
+            "regulatory corpus, neither declaring force_destroy, so both were one teardown "
+            "away from the same BucketNotEmpty. Removing any one of the three restores that."
+        ),
+        path=".github/workflows/destroy.yml",
+        old="        run: ./scripts/empty_layer_buckets.sh infra/aws",
+        new="        run: echo 'skipped'",
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_every_layer_that_owns_buckets_is_emptied_before_it_is_destroyed",
     ),
     Attack(
         name="credentialed-job-trusts-a-movable-tag",
