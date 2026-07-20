@@ -41,6 +41,18 @@ dev = [
     "python-hcl2==7.3.1",
     # ml/serving local Prometheus exporter (tests assert the dashboard metric names).
     "prometheus-client==0.21.0",
+    # Imported directly by ml/serving/scorer.py, ml/training/dataset.py and
+    # ml/monitoring/drift.py. It arrives anyway under pandas and scikit-learn, which is how
+    # it stayed undeclared — an import satisfied by somebody else's dependency tree.
+    "numpy==1.26.4",
+    # `agents/bedrock/kb/ingest.py` imports boto3 at module scope, so importing its tests
+    # needs it present. It was NOT declared when that module landed, and the full suite still
+    # passed locally — boto3 was in the venv transitively — then failed on CI's clean install
+    # with a collection error (run 29710998146). A dependency that is only satisfied by
+    # accident is not a dependency, and "it passes on my machine" is exactly the gap CI is
+    # for. Declared, unpinned: this is the AWS SDK, and pinning it here would drift against
+    # the botocore the Lambda runtime ships.
+    "boto3",
 ]
 
 # The one-command local end-to-end funnel (`make e2e` / docker compose): a self-sufficient
