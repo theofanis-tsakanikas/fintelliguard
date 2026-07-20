@@ -674,6 +674,22 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="dlt-source-uses-a-relative-import",
+        rationale=(
+            "All three medallion pipelines opened with `from . import <layer>_transforms`. "
+            "Correct Python, impossible in DLT: it executes each source like a notebook "
+            "cell, with no parent package, so the pipeline dies at start with "
+            "'attempted relative import with no known parent package'. It hid for the whole "
+            "life of the project because the unit tests import these files AS a package, "
+            "which is the one context that cannot reproduce it."
+        ),
+        path="pipelines/bronze/bronze_pipeline.py",
+        old="from pipelines.bronze import bronze_transforms  # noqa: E402",
+        new="from . import bronze_transforms  # noqa: E402",
+        gate="tests/bundles/test_databricks_tasks.py",
+        must_fail="test_a_dlt_source_uses_absolute_imports",
+    ),
+    Attack(
         name="case-index-source-without-change-data-feed",
         rationale=(
             "A DELTA_SYNC index stays current by reading the source table's change data "

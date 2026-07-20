@@ -13,7 +13,50 @@ import dlt
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from . import bronze_transforms
+
+def _add_sync_root_to_path() -> None:
+    """Put the directory ABOVE `pipelines/` on sys.path.
+
+    DLT executes each source file like a notebook cell, not as a module inside a package,
+    so `from . import bronze_transforms` raised
+
+        ImportError: attempted relative import with no known parent package
+
+    on the first real pipeline run. `resources/pipelines.yml` predicted this — "the @dlt
+    files use relative imports ... packaging the modules as a wheel is a deploy-phase
+    refinement" — and a wheel is still the tidier long-term answer. This is the smaller one:
+    the bundle already syncs the repository layout to the workspace, so the package is there
+    and only needs to be reachable.
+
+    `__file__` is checked but not relied on: it is undefined in some Databricks execution
+    contexts (the seed job died on exactly that). cwd and sys.argv[0] are the fallbacks, and
+    every candidate walks UP looking for the package rather than counting directories, so
+    moving this file cannot silently break it.
+    """
+    import pathlib
+    import sys
+
+    candidates = []
+    for value in (globals().get("__file__"), (sys.argv[0] if sys.argv else None)):
+        if value:
+            candidates.append(pathlib.Path(value).resolve().parent)
+    candidates.append(pathlib.Path.cwd().resolve())
+
+    for start in candidates:
+        for directory in (start, *start.parents):
+            if (directory / "pipelines" / "__init__.py").is_file():
+                if str(directory) not in sys.path:
+                    sys.path.insert(0, str(directory))
+                return
+    raise ImportError(
+        "cannot locate the `pipelines` package from "
+        f"{[str(c) for c in candidates]} — check `sync.paths` in infra/bundles/databricks.yml"
+    )
+
+
+_add_sync_root_to_path()
+
+from pipelines.bronze import bronze_transforms  # noqa: E402
 
 # Provided by Databricks at runtime; None locally (functions below are not called here).
 spark = SparkSession.getActiveSession()

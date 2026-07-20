@@ -278,3 +278,43 @@ def test_the_embedding_endpoint_is_verified_before_the_bundle_needs_it():
         "the preflight hardcodes an endpoint name instead of reading the bundle's, so the "
         "two can disagree and the check would still pass"
     )
+
+
+def _dlt_sources() -> list[Path]:
+    """Every file the DLT pipeline declares as a library, from the bundle definition."""
+    config = _yaml("infra/bundles/resources/pipelines.yml")
+    libraries = config["resources"]["pipelines"]["medallion"]["libraries"]
+    base = _ROOT / "infra" / "bundles" / "resources"
+    return [(base / entry["file"]["path"]).resolve() for entry in libraries if "file" in entry]
+
+
+def test_the_bundle_declares_the_dlt_sources():
+    """Guards the discovery, so the check below cannot pass by finding nothing."""
+    sources = _dlt_sources()
+    assert len(sources) >= 3, f"expected the medallion layers, found {sources}"
+    for path in sources:
+        assert path.is_file(), f"{path} is declared as a DLT library but does not exist"
+
+
+@pytest.mark.parametrize("source", _dlt_sources(), ids=lambda p: p.name)
+def test_a_dlt_source_uses_absolute_imports(source: Path):
+    """DLT runs each source like a notebook cell — there is no parent package.
+
+    All three pipelines opened with `from . import <layer>_transforms`, which is correct
+    Python and cannot work here:
+
+        ImportError: attempted relative import with no known parent package
+
+    `resources/pipelines.yml` had predicted it in a comment and deferred it as a
+    "deploy-phase refinement". It stayed invisible because the local tests import these
+    modules AS a package, where the relative form resolves perfectly — the one context that
+    could not reproduce the one thing that mattered.
+    """
+    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level:
+            raise AssertionError(
+                f"{source.name}:{node.lineno} uses a relative import "
+                f"({'.' * node.level}{node.module or ''}) — DLT executes this file with no "
+                "parent package, so it raises ImportError at pipeline start"
+            )
