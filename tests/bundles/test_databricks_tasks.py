@@ -226,3 +226,29 @@ def test_the_agent_endpoint_is_not_deployed_while_nothing_registers_its_model():
         "the copilot endpoint is included, but nothing logs or registers "
         "fintelliguard.ml.copilot_agent — the deploy will fail on it"
     )
+
+
+def test_the_case_index_source_table_enables_change_data_feed():
+    """A DELTA_SYNC index syncs by READING the source table's change data feed.
+
+    Without it Databricks refuses to build the index at all:
+
+        Source table fintelliguard.gold.resolved_cases is not a valid Vector Search source.
+        Please retry after enabling change data feed (delta.enableChangeDataFeed = true).
+
+    The property belongs to the TABLE, so it belongs to the job that creates the table — and
+    it must be ALTERed rather than passed as a writer option, which only takes effect when
+    the table is first created and would leave a pre-existing table silently unchanged.
+    """
+    index_config = _yaml("infra/bundles/resources/vector_search.yml")["resources"]
+    index = index_config["vector_search_indexes"]["similar_cases"]
+    assert index["index_type"] == "DELTA_SYNC", (
+        "the index is no longer DELTA_SYNC — this test guards a requirement of that type"
+    )
+
+    seed = (_ROOT / "infra/bundles/prereq/seed_resolved_cases.py").read_text("utf-8")
+    code = "\n".join(line for line in seed.splitlines() if not line.lstrip().startswith("#"))
+    assert "delta.enableChangeDataFeed" in code and "ALTER TABLE" in code, (
+        "the seed job does not enable change data feed on gold.resolved_cases, so the "
+        "DELTA_SYNC index cannot be created against it"
+    )

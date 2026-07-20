@@ -65,6 +65,19 @@ def main() -> None:
     # Overwrite, not append: re-running the seed must not multiply the fixture.
     frame.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(fqn)
 
+    # A DELTA_SYNC vector index keeps itself current by READING this table's change data
+    # feed, and Databricks refuses to build one without it:
+    #
+    #     Source table fintelliguard.gold.resolved_cases is not a valid Vector Search
+    #     source. Please retry after enabling change data feed
+    #     (delta.enableChangeDataFeed = true).
+    #
+    # Set here rather than in the index definition because it is a property of the TABLE, and
+    # this job is what creates the table. ALTER rather than a writer option: the option only
+    # applies when the table is created, so an overwrite of an existing table would leave a
+    # pre-CDF table silently unchanged. ALTER is idempotent and applies either way.
+    spark.sql(f"ALTER TABLE {fqn} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
+
     count = spark.table(fqn).count()
     print(f"seeded {fqn} with {count} synthetic resolved cases")
 

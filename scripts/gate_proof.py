@@ -674,6 +674,23 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="case-index-source-without-change-data-feed",
+        rationale=(
+            "A DELTA_SYNC index stays current by reading the source table's change data "
+            "feed, and Databricks refuses to create one without it. The seed created the "
+            "table and never set the property, so the index failed with a message about "
+            "the SOURCE TABLE during a step that reads as a vector-search problem."
+        ),
+        path="infra/bundles/prereq/seed_resolved_cases.py",
+        old=(
+            '    spark.sql(f"ALTER TABLE {fqn} SET TBLPROPERTIES '
+            '(delta.enableChangeDataFeed = true)")'
+        ),
+        new="    pass  # change data feed left off",
+        gate="tests/bundles/test_databricks_tasks.py",
+        must_fail="test_the_case_index_source_table_enables_change_data_feed",
+    ),
+    Attack(
         name="serving-deploys-the-model-the-gate-rejected",
         rationale=(
             "The promotion gate's entire value is that a model below AUC-ROC 0.92 or fraud "
