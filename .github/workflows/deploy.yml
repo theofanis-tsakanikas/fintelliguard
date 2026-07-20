@@ -294,6 +294,12 @@ jobs:
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: |
           set -uo pipefail
+          # The apply job installs no repo dependencies — step 5 is the first thing that pips
+          # anything — so this needs its own parser. `ModuleNotFoundError: No module named
+          # 'yaml'` is what the first version of this step produced, which the repo's own
+          # dependency gate cannot catch: it checks modules under version control, and an
+          # inline workflow script is not one.
+          python -m pip install --quiet pyyaml
           # Read the name from the bundle rather than repeating it here: a check that pins
           # its own copy of the value passes happily while the bundle asks for something else.
           wanted="$(python -c 'import yaml;print(yaml.safe_load(open("infra/bundles/databricks.yml"))["variables"]["embedding_endpoint_name"]["default"])')"
