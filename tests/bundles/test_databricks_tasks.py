@@ -252,3 +252,29 @@ def test_the_case_index_source_table_enables_change_data_feed():
         "the seed job does not enable change data feed on gold.resolved_cases, so the "
         "DELTA_SYNC index cannot be created against it"
     )
+
+
+def test_the_embedding_endpoint_is_verified_before_the_bundle_needs_it():
+    """Which foundation models exist is REGIONAL, and the index reports a missing one as its
+    own failure:
+
+        cannot create resources.vector_search_indexes.similar_cases:
+        Model serving endpoint databricks-bge-large-en not found. (404)
+
+    That was the fourth distinct error from this one bundle step, each hiding the next. The
+    check reads the name FROM the bundle — a preflight that keeps its own copy of the value
+    passes while the bundle asks for something else.
+    """
+    steps = _load("deploy")["jobs"]["apply"]["steps"]
+    names = [s.get("name", "") for s in steps]
+    check = next((i for i, n in enumerate(names) if n.startswith("4a-iii")), None)
+    assert check is not None, "nothing verifies the embedding endpoint before the bundle"
+    assert check < next(i for i, n in enumerate(names) if n.startswith("4b")), (
+        "the embedding endpoint is verified after the bundle that needs it"
+    )
+
+    script = steps[check]["run"]
+    assert "embedding_endpoint_name" in script, (
+        "the preflight hardcodes an endpoint name instead of reading the bundle's, so the "
+        "two can disagree and the check would still pass"
+    )

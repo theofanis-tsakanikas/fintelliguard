@@ -278,6 +278,37 @@ jobs:
           echo "::error::endpoint ${ENDPOINT} never reached ONLINE within 20 minutes"
           exit 1
 
+      # Which foundation models are pre-provisioned varies BY REGION, and the index creation
+      # reports a missing one as a failure of the index:
+      #
+      #     cannot create resources.vector_search_indexes.similar_cases:
+      #     Model serving endpoint databricks-bge-large-en not found. (404)
+      #
+      # That is the fourth distinct error this one bundle step produced, each hiding the next,
+      # and this one is not our bug at all — `databricks-bge-large-en` simply does not exist
+      # in eu-central-1. Checking first turns it into a direct statement, and lists what IS
+      # available so the fix does not need a trip to the console.
+      - name: 4a-iii) Verify the embedding endpoint the case index needs
+        env:
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          set -uo pipefail
+          # Read the name from the bundle rather than repeating it here: a check that pins
+          # its own copy of the value passes happily while the bundle asks for something else.
+          wanted="$(python -c 'import yaml;print(yaml.safe_load(open("infra/bundles/databricks.yml"))["variables"]["embedding_endpoint_name"]["default"])')"
+          if databricks serving-endpoints get "${wanted}" >/dev/null 2>&1; then
+            echo "embedding endpoint '${wanted}' is present"
+            exit 0
+          fi
+          echo "::error::embedding endpoint '${wanted}' does not exist in this workspace."
+          echo "Embedding endpoints that DO exist here:"
+          databricks serving-endpoints list -o json \
+            | jq -r '.[] | select(.task // "" | test("embedding"; "i")) | "  - \(.name)  (\(.task))"' \
+            || echo "  (could not list endpoints)"
+          echo "Set embedding_endpoint_name in infra/bundles/databricks.yml to one of these."
+          exit 1
+
       - name: 4b) infra/bundles (Databricks Asset Bundles)
         working-directory: infra/bundles
         env:

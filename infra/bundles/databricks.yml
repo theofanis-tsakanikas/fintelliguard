@@ -23,8 +23,15 @@ variables:
     description: Unity Catalog group of fraud analysts (copilot + serving consumers).
     default: fintelliguard-analysts
   embedding_endpoint_name:
-    description: Foundation-model embedding endpoint backing Vector Search.
-    default: databricks-bge-large-en
+    description: >-
+      Foundation-model embedding endpoint backing Vector Search. Was
+      `databricks-bge-large-en`, which does not exist in this workspace — the index creation
+      failed with ENDPOINT_NOT_FOUND (deploy run 29720269216). Databricks replaced BGE Large
+      with GTE Large as the default English retrieval embedding; same 1024 dimensions, so the
+      index shape is unchanged. Which foundation models are pre-provisioned varies by region,
+      which is why the deploy now verifies this endpoint exists before the bundle runs
+      instead of discovering it inside a bundle error.
+    default: databricks-gte-large-en
   # The model name/version variables moved to `serving/databricks.yml` with the endpoints
   # that use them. Leaving them here would be four unused declarations that read as if this
   # bundle still serves something — and `fraud_model_version: "1"` in particular was a
