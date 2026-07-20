@@ -1,3 +1,11 @@
+# NOT DEPLOYED YET — see `include:` in databricks.yml.
+#
+# Nothing logs or registers `fintelliguard.ml.copilot_agent`: there is no `mlflow.log_model`
+# anywhere under `agents/databricks/`. Deploying this endpoint would fail with "Registered
+# model does not exist", which is precisely the failure the serving split was made to remove.
+#
+# Kept in the tree, out of the include list, so the endpoint's intended shape stays visible
+# and reviewable instead of being deleted and re-guessed later.
 # Copilot agent serving endpoint — the Mosaic AI Agent Framework agent
 # (agents/databricks) served as a model serving endpoint for analysts.
 

@@ -674,6 +674,21 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="serving-deploys-the-model-the-gate-rejected",
+        rationale=(
+            "The promotion gate's entire value is that a model below AUC-ROC 0.92 or fraud "
+            "precision 0.85 is not served. But a rejected model IS still registered — it "
+            "just never takes the `production` alias. So resolving the served version as "
+            "'the latest one' deploys exactly the model the gate refused, while the gate's "
+            "own log line still reads REJECT. The gate would be decorative and look active."
+        ),
+        path=".github/workflows/deploy.yml",
+        old='if ! version="$(databricks model-versions get-by-alias \\',
+        new='if ! version="$(databricks model-versions list \\',
+        gate="tests/bundles/test_databricks_tasks.py",
+        must_fail="test_serving_is_pinned_to_the_promoted_version_not_the_latest",
+    ),
+    Attack(
         name="vector-index-races-its-own-endpoint",
         rationale=(
             "Declaring the endpoint next to the index reads as tidy and cannot work: DAB "

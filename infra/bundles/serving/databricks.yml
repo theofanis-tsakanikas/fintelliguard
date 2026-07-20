@@ -1,0 +1,56 @@
+# Serving bundle — the endpoints that can only exist AFTER a model is registered.
+#
+# These lived in the main bundle, and could never deploy from a clean estate. A serving
+# endpoint names a registered model version, so the main bundle failed every time with
+#
+#     Registered model 'fintelliguard.ml.fraud_scorer' does not exist.
+#
+# and the failure was structural, not transient: the same bundle also defined the DLT
+# pipeline whose output the training job needs. Pipelines -> data -> training -> registered
+# model -> serving is a chain, and DAB deploys a bundle in one pass. No ordering inside one
+# bundle could satisfy it.
+#
+# So the chain is expressed where it can be — across bundles, sequenced by the deploy:
+#
+#     prereq (seed + vector endpoint)
+#       -> main (pipelines, index, training job, grants)
+#       -> ingest IEEE-CIS -> run pipeline -> run training job
+#       -> THIS
+#
+# `fraud_model_version` is not defaulted to "1" here as it was before. The deploy resolves
+# it from the `production` ALIAS, so the promotion gate is load-bearing: a model that failed
+# AUC/precision never takes that alias, so it is never served.
+
+bundle:
+  name: fintelliguard-serving
+
+variables:
+  analyst_group:
+    description: Unity Catalog group of fraud analysts (serving consumers).
+    default: fintelliguard-analysts
+  fraud_model_name:
+    description: UC name of the XGBoost scorer model.
+    default: fintelliguard.ml.fraud_scorer
+  fraud_model_version:
+    description: >-
+      (deploy) Version holding the `production` alias, resolved by the deploy from
+      `databricks model-versions get-by-alias`. No default: a wrong-but-plausible "1" would
+      serve whatever happened to be registered first, gate or no gate.
+  agent_model_name:
+    description: UC name of the copilot agent model.
+    default: fintelliguard.ml.copilot_agent
+  agent_model_version:
+    description: (deploy) Version of the copilot agent model.
+
+include:
+  # EXPLICIT, not a glob. `agent_serving.yml` is deliberately NOT included: nothing in this
+  # repository logs or registers `fintelliguard.ml.copilot_agent` yet, so including it would
+  # guarantee the same "Registered model does not exist" failure this bundle exists to end —
+  # just for the other model. It is wired in when the agent is made loggable; the file stays
+  # so the endpoint's shape is reviewable rather than lost.
+  - ./model_serving.yml
+
+targets:
+  dev:
+    mode: development
+    default: true

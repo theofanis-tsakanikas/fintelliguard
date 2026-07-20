@@ -159,3 +159,70 @@ def test_the_deploy_waits_for_the_endpoint_to_be_online():
         "the wait does not stop on a terminal failure state, so a dead endpoint burns the "
         "whole timeout and reports nothing useful"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The ML chain: pipelines -> data -> training -> registered model -> serving
+# --------------------------------------------------------------------------- #
+
+
+def test_the_ml_chain_runs_in_dependency_order():
+    """Each link needs the one before it, and DAB deploys a bundle in ONE pass.
+
+    The serving endpoints used to sit in the same bundle as the DLT pipeline whose output
+    trains the model they serve, so a clean estate could never deploy: the bundle failed with
+    "Registered model 'fintelliguard.ml.fraud_scorer' does not exist" every time.
+    """
+    steps = _load("deploy")["jobs"]["apply"]["steps"]
+    names = [s.get("name", "") for s in steps]
+
+    def index(prefix: str) -> int:
+        found = next((i for i, n in enumerate(names) if n.startswith(prefix)), None)
+        assert found is not None, f"the deploy has no step '{prefix}'"
+        return found
+
+    order = [index(p) for p in ("4b)", "5)", "6)", "7)", "8)")]
+    assert order == sorted(order), (
+        f"the ML chain is out of order: {[names[i] for i in order]}. It must be "
+        "bundle -> data -> pipeline -> training -> serving"
+    )
+
+
+def test_serving_is_pinned_to_the_promoted_version_not_the_latest():
+    """The one assertion that keeps the promotion gate real.
+
+    `evaluate_promotion` rejects a model below AUC-ROC 0.92 or fraud precision 0.85, and a
+    rejected model is still REGISTERED — it just never takes the `production` alias. Deploying
+    "the latest version" would therefore serve precisely the model the gate refused, while the
+    gate's own logs still read REJECT. The endpoint must be pinned by alias.
+    """
+    steps = _load("deploy")["jobs"]["apply"]["steps"]
+    serving = next(s for s in steps if s.get("name", "").startswith("8)"))
+    script = serving["run"]
+
+    assert "get-by-alias" in script and "production" in script, (
+        "the serving deploy does not resolve the version from the `production` alias, so it "
+        "can serve a model the promotion gate rejected"
+    )
+    assert "latest" not in script.lower(), (
+        "the serving deploy mentions 'latest' — the newest version is exactly what the gate "
+        "may have rejected"
+    )
+    # No fallback default: a missing alias must stop the deploy, not serve version 1.
+    serving_bundle = _yaml("infra/bundles/serving/databricks.yml")
+    assert "default" not in serving_bundle["variables"]["fraud_model_version"], (
+        "fraud_model_version has a default again — it would serve whatever was registered "
+        "first whenever the alias lookup is skipped or fails"
+    )
+
+
+def test_the_agent_endpoint_is_not_deployed_while_nothing_registers_its_model():
+    """`agents/databricks/` contains no mlflow.log_model, so the copilot model cannot exist.
+
+    Including its endpoint would reproduce the exact failure the serving split removed.
+    """
+    include = _yaml("infra/bundles/serving/databricks.yml")["include"]
+    assert "./agent_serving.yml" not in include, (
+        "the copilot endpoint is included, but nothing logs or registers "
+        "fintelliguard.ml.copilot_agent — the deploy will fail on it"
+    )

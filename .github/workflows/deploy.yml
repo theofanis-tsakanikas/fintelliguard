@@ -284,3 +284,64 @@ jobs:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: databricks bundle deploy -t ${{ inputs.environment }}
+
+      # ---- The ML chain -------------------------------------------------------------------
+      #
+      # pipelines -> data -> features -> training -> registered model -> serving. Every link
+      # was written and none were connected: `docs/DEPLOY.md` §6 carried the whole thing as
+      # prose ("in Databricks: run the DLT pipeline, then ml/training"), nothing ran it, and
+      # the serving endpoints therefore failed on every single deploy with "Registered model
+      # 'fintelliguard.ml.fraud_scorer' does not exist".
+      #
+      # DAB deploys a bundle in one pass, so this ordering cannot live in a bundle. It lives
+      # here because here is the only place it can.
+
+      - name: 5) Fetch IEEE-CIS into the raw bucket
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet boto3 kaggle
+          bucket="$(terraform -chdir=infra/aws output -raw raw_bucket_name)"
+          python -m ml.training.ingest_ieee --bucket "${bucket}" --region "${AWS_REGION}"
+
+      - name: 6) Run the DLT pipeline to build the gold feature tables
+        env:
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        working-directory: infra/bundles
+        # `bundle run` on a pipeline blocks until the update finishes, which is what we want:
+        # the training job reads the table this produces, and starting it against a
+        # half-built table would train on whatever happened to be committed so far.
+        run: databricks bundle run -t ${{ inputs.environment }} medallion
+
+      - name: 7) Train, gate and register the fraud scorer
+        env:
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        working-directory: infra/bundles
+        run: databricks bundle run -t ${{ inputs.environment }} train_fraud_scorer
+
+      - name: 8) Serving endpoints, pinned to the version the gate promoted
+        env:
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        working-directory: infra/bundles/serving
+        # Resolved from the `production` ALIAS, never from "latest". This is what makes the
+        # promotion gate real: a model that missed AUC-ROC >= 0.92 or fraud precision >= 0.85
+        # is registered under `staging` and never takes `production`, so this lookup finds
+        # the last model that DID pass — or fails outright on a first deploy where none has.
+        # Serving "the newest version" would deploy exactly the model the gate rejected.
+        run: |
+          set -euo pipefail
+          if ! version="$(databricks model-versions get-by-alias \
+              fintelliguard.ml.fraud_scorer production -o json | jq -er '.version')"; then
+            echo "::error::no version of fintelliguard.ml.fraud_scorer holds the 'production' alias."
+            echo "The promotion gate rejected this training run and there is no previously"
+            echo "promoted model to fall back to. Serving is deliberately NOT updated."
+            exit 1
+          fi
+          echo "serving fraud_scorer version ${version} (production alias)"
+          databricks bundle deploy -t ${{ inputs.environment }} \
+            --var="fraud_model_version=${version}"

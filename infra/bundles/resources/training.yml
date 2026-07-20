@@ -1,0 +1,38 @@
+# Train, gate and register the fraud scorer.
+#
+# This job is the assembly that did not exist. `ml/training/` and `ml/serving/` held every
+# piece — train, promotion gate, registry, pyfunc — fully unit-tested, and nothing called
+# them in order, so no model was ever registered and the serving endpoints failed on every
+# deploy with "Registered model 'fintelliguard.ml.fraud_scorer' does not exist".
+#
+# It is deployed by the main bundle and RUN by the deploy workflow, after the DLT pipeline
+# has produced gold.txn_features_training and before the serving bundle looks for a version
+# to serve. DAB cannot express that ordering; the workflow can.
+
+resources:
+  jobs:
+    train_fraud_scorer:
+      name: fintelliguard-train-fraud-scorer
+
+      tasks:
+        - task_key: train
+          spark_python_task:
+            # Relative to THIS file's directory, not the bundle root — the same rule that
+            # makes pipelines.yml say `../../../pipelines/...`. `./train_fraud_scorer.py`
+            # resolved to infra/bundles/resources/, where the script is not.
+            python_file: ../train_fraud_scorer.py
+
+          new_cluster:
+            # The ML runtime, not the standard one: it ships mlflow, scikit-learn and
+            # xgboost at versions Databricks tests together. Installing them as `libraries`
+            # on a standard runtime works too and adds minutes of pip resolution to every
+            # run for packages the ML image already has.
+            spark_version: 15.4.x-cpu-ml-scala2.12
+            node_type_id: m5d.xlarge
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.master: "local[*]"
+              spark.databricks.cluster.profile: singleNode
+            custom_tags:
+              ResourceClass: SingleNode

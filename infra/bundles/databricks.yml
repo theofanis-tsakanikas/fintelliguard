@@ -25,18 +25,10 @@ variables:
   embedding_endpoint_name:
     description: Foundation-model embedding endpoint backing Vector Search.
     default: databricks-bge-large-en
-  fraud_model_name:
-    description: UC name of the XGBoost scorer model.
-    default: fintelliguard.ml.fraud_scorer
-  fraud_model_version:
-    description: Served version of the scorer model.
-    default: "1"
-  agent_model_name:
-    description: UC name of the copilot agent model.
-    default: fintelliguard.ml.copilot_agent
-  agent_model_version:
-    description: Served version of the agent model.
-    default: "1"
+  # The model name/version variables moved to `serving/databricks.yml` with the endpoints
+  # that use them. Leaving them here would be four unused declarations that read as if this
+  # bundle still serves something — and `fraud_model_version: "1"` in particular was a
+  # default that quietly meant "serve whatever was registered first, gate or no gate".
   vector_endpoint_name:
     description: Vector Search endpoint name.
     default: fintelliguard-cases
@@ -62,6 +54,12 @@ sync:
   paths:
     - .
     - ../../pipelines
+    # The training job's import graph, traced rather than guessed: `train_fraud_scorer.py`
+    # imports ml.training (load/train/gate/register) and ml.serving (the pyfunc it logs),
+    # and ml.serving.scorer imports ml.features for the canonical schema. Syncing only `ml`
+    # covers all three; listing them explicitly is how the seed job's missing package was
+    # found the expensive way.
+    - ../../ml
 
 include:
   - resources/*.yml
