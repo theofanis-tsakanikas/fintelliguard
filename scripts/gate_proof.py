@@ -674,6 +674,28 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="vector-index-races-its-own-endpoint",
+        rationale=(
+            "Declaring the endpoint next to the index reads as tidy and cannot work: DAB "
+            "deploys a bundle's resources in one pass with no ordering, and a Vector Search "
+            "endpoint provisions for minutes. The index is then created against an endpoint "
+            "that exists only as an accepted API call — NOT_FOUND, which reads like a naming "
+            "or permissions fault and is neither."
+        ),
+        path="infra/bundles/resources/vector_search.yml",
+        old="resources:\n  vector_search_indexes:",
+        new=(
+            "resources:\n"
+            "  vector_search_endpoints:\n"
+            "    cases:\n"
+            "      name: ${var.vector_endpoint_name}\n"
+            "      endpoint_type: STANDARD\n\n"
+            "  vector_search_indexes:"
+        ),
+        gate="tests/bundles/test_databricks_tasks.py",
+        must_fail="test_the_vector_endpoint_is_created_before_the_index_that_needs_it",
+    ),
+    Attack(
         name="corpus-uploaded-around-the-screen",
         rationale=(
             "What shipped: the ONLY documented way to load the corpus was a manual "

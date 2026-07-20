@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.cicd.test_workflows import _load
+
 _ROOT = Path(__file__).resolve().parents[2]
 _BUNDLES = _ROOT / "infra" / "bundles"
 
@@ -98,3 +100,62 @@ def test_a_task_script_does_not_rely_on_dunder_file(script: Path):
                 f"{script.name}:{node.lineno} reads __file__, which is undefined in a "
                 "Databricks task — resolve paths from sys.argv[0] or cwd instead"
             )
+
+
+# --------------------------------------------------------------------------- #
+# Ordering DAB cannot express, and the deploy therefore must
+# --------------------------------------------------------------------------- #
+
+
+def _yaml(path: str) -> dict:
+    return yaml.safe_load((_ROOT / path).read_text(encoding="utf-8")) or {}
+
+
+def test_the_vector_endpoint_is_created_before_the_index_that_needs_it():
+    """An index cannot be built on an endpoint that is still provisioning.
+
+    Both were declared in the main bundle, and DAB deploys a bundle's resources in one pass
+    with no ordering — so the index was requested against an endpoint that existed only as an
+    accepted API call:
+
+        NOT_FOUND: AI Search endpoint fintelliguard-cases not found.
+
+    That reads like a naming or permissions fault and is neither. The endpoint belongs with
+    the seed job, in the bundle whose entire purpose is "things the main bundle needs to
+    already exist".
+    """
+    main = _yaml("infra/bundles/resources/vector_search.yml")["resources"]
+    prereq = _yaml("infra/bundles/prereq/databricks.yml")["resources"]
+
+    assert "vector_search_indexes" in main, "the case index left the main bundle"
+    assert "vector_search_endpoints" not in main, (
+        "the Vector Search endpoint is declared beside the index again — DAB gives them no "
+        "ordering, so the index races an endpoint that takes minutes to provision"
+    )
+    assert "vector_search_endpoints" in prereq, (
+        "nothing creates the Vector Search endpoint before the main bundle needs it"
+    )
+
+
+def test_the_deploy_waits_for_the_endpoint_to_be_online():
+    """Creating an endpoint is not the same as having one.
+
+    `bundle deploy` returns when Databricks ACCEPTS the request; the endpoint is PROVISIONING
+    for minutes afterwards. Without an explicit wait the ordering above buys nothing.
+    """
+    steps = _load("deploy")["jobs"]["apply"]["steps"]
+    names = [s.get("name", "") for s in steps]
+    wait = next((i for i, n in enumerate(names) if "ONLINE" in n), None)
+    assert wait is not None, "the deploy never waits for the Vector Search endpoint"
+
+    main_bundle = next(i for i, n in enumerate(names) if n.startswith("4b"))
+    assert wait < main_bundle, "the wait happens after the bundle that needs the endpoint"
+
+    script = steps[wait]["run"]
+    assert "ONLINE" in script, "the wait does not check for the ONLINE state"
+    # A wait that only breaks on success hangs for the full timeout on a dead endpoint, and
+    # the log gives no reason — the failure states have to end it too.
+    assert "FAILED" in script, (
+        "the wait does not stop on a terminal failure state, so a dead endpoint burns the "
+        "whole timeout and reports nothing useful"
+    )

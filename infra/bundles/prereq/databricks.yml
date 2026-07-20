@@ -12,6 +12,15 @@
 bundle:
   name: fintelliguard-prereq
 
+variables:
+  vector_endpoint_name:
+    description: >-
+      Vector Search endpoint the main bundle's case index is built on. Must match
+      `vector_endpoint_name` in ../databricks.yml — the index there names this endpoint by
+      string, so a mismatch fails the main deploy with NOT_FOUND rather than anything that
+      points at the drift.
+    default: fintelliguard-cases
+
 # Every first-party package the seed job's import graph reaches — traced, not guessed:
 # `agents.databricks.cases.seed` imports `simulator.generator.FraudPattern` for the
 # archetypes and `ml.serving.scorer` for the decision bands, because the fixture is derived
@@ -30,6 +39,20 @@ targets:
     default: true
 
 resources:
+  # Provisioned HERE rather than beside the index it serves. A Vector Search endpoint takes
+  # minutes to come up, and DAB deploys a bundle's resources in one pass with no ordering —
+  # so declaring the endpoint next to the index meant the index was requested against an
+  # endpoint that did not exist yet:
+  #
+  #     NOT_FOUND: AI Search endpoint fintelliguard-cases not found.
+  #
+  # Creating it in the prereq deploy gives it the whole seed job to provision in, and the
+  # deploy waits for ONLINE before the main bundle runs.
+  vector_search_endpoints:
+    cases:
+      name: ${var.vector_endpoint_name}
+      endpoint_type: STANDARD
+
   jobs:
     seed_resolved_cases:
       name: fintelliguard-seed-resolved-cases

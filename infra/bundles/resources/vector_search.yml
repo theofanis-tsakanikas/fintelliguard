@@ -1,13 +1,20 @@
-# Vector Search — endpoint + DELTA_SYNC index over the resolved-cases table, embedding
-# the case text (features + analyst notes + outcome, per docs/copilot-design.md). Feeds
-# the copilot's search_similar_cases tool.
+# Vector Search — the DELTA_SYNC index over the resolved-cases table, embedding the case
+# text (features + analyst notes + outcome, per docs/copilot-design.md). Feeds the copilot's
+# search_similar_cases tool.
+#
+# The ENDPOINT is not here. It lives in `infra/bundles/prereq`, with the seed job, because
+# it is a prerequisite in the literal sense: DAB deploys every resource in one pass with no
+# ordering, and a Vector Search endpoint takes MINUTES to provision. Declaring both together
+# meant the index was created against an endpoint that existed only as a request:
+#
+#     POST /api/2.0/vector-search/indexes
+#     NOT_FOUND: AI Search endpoint fintelliguard-cases not found.
+#
+# Same shape as the resolved_cases table this index reads — and the same fix, in the same
+# place. The prereq bundle deploys and the deploy waits for the endpoint to report ONLINE
+# before this index is asked for.
 
 resources:
-  vector_search_endpoints:
-    cases:
-      name: ${var.vector_endpoint_name}
-      endpoint_type: STANDARD
-
   vector_search_indexes:
     similar_cases:
       name: ${var.catalog}.gold.case_embeddings_index
