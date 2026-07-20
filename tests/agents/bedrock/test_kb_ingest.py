@@ -129,14 +129,55 @@ def test_a_document_removed_from_the_corpus_is_removed_from_the_bucket():
 # --------------------------------------------------------------------------- #
 
 
-def test_a_completed_job_that_indexed_nothing_is_a_failure():
-    """`COMPLETE` with zero documents indexed leaves exactly the empty KB this prevents.
+def test_a_job_that_scanned_nothing_is_a_failure():
+    """Zero SCANNED is the empty-index case: the data source found no documents at all.
 
     Reported as success it would surface much later as a Tier-2 verdict that cannot ground
     itself — which reads as an agent problem rather than a deployment one.
     """
-    agent = _FakeAgent([{"status": "COMPLETE", "statistics": {"numberOfNewDocumentsIndexed": 0}}])
-    with pytest.raises(RuntimeError, match="without indexing any document"):
+    agent = _FakeAgent([{"status": "COMPLETE", "statistics": {"numberOfDocumentsScanned": 0}}])
+    with pytest.raises(RuntimeError, match="scanned NO documents"):
+        start_and_wait(agent, "kb-1", "ds-1", poll_seconds=0)
+
+
+def test_a_redeploy_that_indexes_nothing_new_is_a_success():
+    """The corpus is unchanged on most deploys, so Bedrock indexes nothing new.
+
+    The first version of this check failed on `numberOfNewDocumentsIndexed == 0` and killed
+    deploy run 29717600570 with `scanned 4, indexed 0, failed 0` — insisting the Knowledge
+    Base was empty while it held the entire corpus. The test encoded the assumption instead
+    of the property, so it agreed with the bug. Unchanged is not empty.
+    """
+    agent = _FakeAgent(
+        [
+            {
+                "status": "COMPLETE",
+                "statistics": {
+                    "numberOfDocumentsScanned": 4,
+                    "numberOfNewDocumentsIndexed": 0,
+                    "numberOfDocumentsFailed": 0,
+                },
+            }
+        ]
+    )
+    assert start_and_wait(agent, "kb-1", "ds-1", poll_seconds=0)["status"] == "COMPLETE"
+
+
+def test_documents_that_failed_to_index_are_a_failure():
+    """A partially indexed corpus grounds verdicts in an incomplete regulation set."""
+    agent = _FakeAgent(
+        [
+            {
+                "status": "COMPLETE",
+                "statistics": {
+                    "numberOfDocumentsScanned": 4,
+                    "numberOfNewDocumentsIndexed": 3,
+                    "numberOfDocumentsFailed": 1,
+                },
+            }
+        ]
+    )
+    with pytest.raises(RuntimeError, match="failed to index 1 of 4"):
         start_and_wait(agent, "kb-1", "ds-1", poll_seconds=0)
 
 
@@ -150,7 +191,10 @@ def test_a_successful_job_returns_once_documents_are_indexed():
     agent = _FakeAgent(
         [
             {"status": "IN_PROGRESS"},
-            {"status": "COMPLETE", "statistics": {"numberOfNewDocumentsIndexed": 4}},
+            {
+                "status": "COMPLETE",
+                "statistics": {"numberOfDocumentsScanned": 4, "numberOfNewDocumentsIndexed": 4},
+            },
         ]
     )
     job = start_and_wait(agent, "kb-1", "ds-1", poll_seconds=0)

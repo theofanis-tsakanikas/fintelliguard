@@ -126,14 +126,32 @@ def start_and_wait(
                 f"{stats.get('numberOfNewDocumentsIndexed', '?')}, failed "
                 f"{stats.get('numberOfDocumentsFailed', '?')}"
             )
-            # A job can report COMPLETE having indexed nothing — an empty index is exactly
-            # the state this module exists to prevent, so it is a failure here.
-            if not stats.get("numberOfNewDocumentsIndexed") and not stats.get(
-                "numberOfModifiedDocumentsIndexed"
-            ):
+            # What "the index is empty" actually looks like — and it is NOT "indexed 0".
+            #
+            # The first version failed whenever `numberOfNewDocumentsIndexed` was zero. That
+            # is the normal result of a RE-DEPLOY: the corpus has not changed, so Bedrock
+            # indexes nothing new and reports `scanned 4, indexed 0, failed 0`. Deploy run
+            # 29717600570 died on exactly that, with an error message insisting the Knowledge
+            # Base was empty while it held the full corpus. The check asserted my assumption
+            # rather than the property.
+            #
+            # SCANNED is the number that answers the question. Zero scanned means the data
+            # source found no documents — the genuinely empty case. Anything failed means
+            # documents were rejected during embedding. Neither is the same as "unchanged".
+            scanned = stats.get("numberOfDocumentsScanned") or 0
+            failed = stats.get("numberOfDocumentsFailed") or 0
+            if scanned == 0:
                 raise RuntimeError(
-                    f"ingestion job {job_id} completed without indexing any document — "
-                    "the Knowledge Base is still empty and Tier 2 cannot ground a verdict"
+                    f"ingestion job {job_id} scanned NO documents — the data source found "
+                    "nothing to index, so the Knowledge Base is empty and Tier 2 cannot "
+                    "ground a verdict. Check that the upload above reached the bucket the "
+                    "data source reads."
+                )
+            if failed:
+                raise RuntimeError(
+                    f"ingestion job {job_id} failed to index {failed} of {scanned} "
+                    "documents; a partially indexed corpus grounds verdicts in an "
+                    "incomplete regulation set"
                 )
             return job
 
