@@ -43,11 +43,19 @@ for address in $(terraform -chdir="${layer}" state list 2>/dev/null | grep -E '^
     # BOTH lists matter. `Versions` alone leaves the DELETE MARKERS behind, and a bucket
     # holding only markers is still not empty as far as S3 is concerned — while `aws s3 ls`
     # shows nothing, so it looks like the emptying worked.
-    objects="$(echo "${raw}" \
-      | jq -c '[(.Versions // [])[], (.DeleteMarkers // [])[] | {Key, VersionId}]')"
-    count="$(echo "${objects}" | jq 'length')"
+    # Built through STDIN and straight to a file. The first version passed the object list
+    # to jq as an argument (`--argjson`), which dies once a page is large enough:
+    #
+    #     /usr/bin/jq: Argument list too long
+    #
+    # A thousand keys is past ARG_MAX. It survived the raw bucket, which held one object, and
+    # failed on the DBFS root, which holds many — the batch size, not the pagination, and the
+    # test asserting pagination existed could not see it.
+    printf '%s' "${raw}" \
+      | jq '{Objects: [(.Versions // [])[], (.DeleteMarkers // [])[] | {Key, VersionId}],
+             Quiet: true}' > /tmp/delete-batch.json
+    count="$(jq '.Objects | length' /tmp/delete-batch.json)"
     [ "${count}" = "0" ] && break
-    jq -n --argjson o "${objects}" '{Objects: $o, Quiet: true}' > /tmp/delete-batch.json
     aws s3api delete-objects --bucket "${name}" --delete file:///tmp/delete-batch.json >/dev/null
     echo "  deleted ${count} version(s)/marker(s)"
   done

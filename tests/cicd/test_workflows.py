@@ -469,11 +469,24 @@ def test_the_bucket_emptying_handles_delete_markers_and_pagination():
     on any bucket that outgrew that — the delete then fails for a reason the log reads as
     permissions.
     """
-    script = (Path(__file__).resolve().parents[2] / "scripts/empty_layer_buckets.sh").read_text(
+    raw = (Path(__file__).resolve().parents[2] / "scripts/empty_layer_buckets.sh").read_text(
         "utf-8"
     )
+    # COMMANDS ONLY. The first version of the --argjson assertion below read the raw text and
+    # failed on the comment explaining why --argjson is not used — flagging the script for
+    # documenting the rule it obeys. That is the third time today the same mistake appeared
+    # in a test of mine, and it is the mistake this whole suite exists to catch: a check that
+    # cannot tell a command from a comment about one.
+    script = "\n".join(line for line in raw.splitlines() if not line.lstrip().startswith("#"))
     assert "DeleteMarkers" in script, "only object versions are deleted; markers would remain"
     assert "max-keys" in script and "while" in script, "the version listing is not paginated"
+    # A page of 1000 keys exceeds ARG_MAX. The first version passed the list to jq with
+    # `--argjson` and died with "Argument list too long" on the first bucket big enough to
+    # matter — pagination was present and correct, and the BATCH still went out as argv.
+    assert "--argjson" not in script, (
+        "the delete batch is passed to jq as a command-line argument; a full 1000-key page "
+        "exceeds ARG_MAX and the emptying dies on exactly the buckets that need it"
+    )
     assert "terraform" in script and "state list" in script, (
         "bucket names are not read from the state being destroyed — this could reach buckets "
         "the layer does not own"

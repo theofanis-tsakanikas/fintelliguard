@@ -811,6 +811,21 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_the_bucket_emptying_handles_delete_markers_and_pagination",
     ),
     Attack(
+        name="delete-batch-passed-as-a-command-line-argument",
+        rationale=(
+            '`jq -n --argjson o "$objects"` reads as ordinary shell and dies with '
+            "'Argument list too long' once a page is large enough — a 1000-key page is past "
+            "ARG_MAX. It survived the bucket holding one object and failed on the DBFS root, "
+            "so the emptying broke on precisely the buckets that needed it, while the test "
+            "asserting pagination existed stayed green."
+        ),
+        path="scripts/empty_layer_buckets.sh",
+        old="    printf '%s' \"${raw}\" \\",
+        new='    jq -n --argjson o "${raw}" \\',
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_the_bucket_emptying_handles_delete_markers_and_pagination",
+    ),
+    Attack(
         name="one-layer-destroyed-without-emptying-its-buckets",
         rationale=(
             "The emptying step existed for infra/databricks only — the layer that had "
