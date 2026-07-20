@@ -811,6 +811,29 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_the_bucket_emptying_handles_delete_markers_and_pagination",
     ),
     Attack(
+        name="ml-steps-run-on-an-expired-oidc-session",
+        rationale=(
+            "The OIDC role session is one hour, and the deploy runs longer: MSK alone takes "
+            "~26 minutes, then the workspace, corpus, seed cluster and bundle. By the ML "
+            "steps the credentials assumed at job start have expired — ExpiredToken. It was "
+            "invisible until a run first got past 4b. Removing the refresh restores it."
+        ),
+        path=".github/workflows/deploy.yml",
+        # Neuter the refresh step's role assumption — the faithful mutation is the step being
+        # absent, and the session name makes this block unique to it.
+        old=(
+            "        uses: aws-actions/configure-aws-credentials"
+            "@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1\n"
+            "        with:\n"
+            "          aws-region: ${{ env.AWS_REGION }}\n"
+            "          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}\n"
+            "          role-session-name: fintelliguard-apply-ml"
+        ),
+        new='        run: echo "refresh removed"',
+        gate="tests/cicd/test_workflows.py",
+        must_fail="test_the_deploy_refreshes_aws_credentials_before_the_long_ml_stretch",
+    ),
+    Attack(
         name="delete-batch-passed-as-a-command-line-argument",
         rationale=(
             '`jq -n --argjson o "$objects"` reads as ordinary shell and dies with '

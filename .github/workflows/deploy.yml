@@ -333,6 +333,26 @@ jobs:
       # DAB deploys a bundle in one pass, so this ordering cannot live in a bundle. It lives
       # here because here is the only place it can.
 
+      # The OIDC role session is one hour (max_session_duration = 3600 in bootstrap/oidc.tf),
+      # and by this point the deploy has spent longer than that: MSK alone takes ~26 minutes
+      # to create, then the workspace, the corpus load, the seed job's cluster, and the
+      # bundle. The credentials assumed at job start have expired, and the next AWS call dies:
+      #
+      #     ExpiredToken: The security token included in the request is expired
+      #
+      # This was invisible until a run first got PAST step 4b — every earlier deploy failed
+      # before the clock ran out. Re-assuming the role mints a fresh one-hour session for the
+      # remaining AWS work (only step 5 touches AWS; 6-8 are Databricks). Refreshing is
+      # deliberately preferred over raising max_session_duration: it keeps the credential
+      # short-lived, and the >1h runtime is itself the signal that this monolith should
+      # eventually split into infra / data+ml workflows.
+      - name: Refresh AWS credentials (the OIDC session is 1h; this deploy runs longer)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: fintelliguard-apply-ml
+
       - name: 5) Fetch IEEE-CIS into the raw bucket
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}

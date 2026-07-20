@@ -522,3 +522,35 @@ def test_the_secret_purge_can_only_touch_secrets_already_being_deleted():
     assert prefix.startswith("fintelliguard/") and "inputs.environment" in prefix, (
         f"the purge prefix {prefix!r} is not pinned to this project and the target environment"
     )
+
+
+def test_the_deploy_refreshes_aws_credentials_before_the_long_ml_stretch():
+    """The OIDC role session is one hour, and the deploy runs longer than that.
+
+    MSK alone takes ~26 minutes to create; by the time the ML steps run — after the
+    workspace, the corpus load, the seed cluster and the bundle — the credentials assumed at
+    job start have expired:
+
+        ExpiredToken: The security token included in the request is expired
+
+    It was invisible until a run first got past step 4b. Step 5 is the first AWS-touching
+    step after that long Databricks stretch, so a fresh role assumption must precede it.
+    Refreshing rather than lengthening the session keeps the credential short-lived.
+    """
+    steps = _load("deploy")["jobs"]["apply"]["steps"]
+
+    # The refresh must sit AFTER 4b and BEFORE step 5. The first version of this test also
+    # accepted "any assume before step 5", which the mandatory job-start assumption satisfies
+    # on its own — so it passed with the refresh deleted. The window is the whole point.
+    bundle_4b = next(i for i, s in enumerate(steps) if s.get("name", "").startswith("4b"))
+    step5 = next(i for i, s in enumerate(steps) if s.get("name", "").startswith("5)"))
+
+    refreshed = any(
+        bundle_4b < i < step5 and "configure-aws-credentials" in (s.get("uses") or "")
+        for i, s in enumerate(steps)
+    )
+    assert refreshed, (
+        "no AWS credential refresh between the long bundle step (4b) and the ML steps — the "
+        "one-hour OIDC session assumed at job start will have expired by the time step 5 "
+        "calls AWS, and it dies with ExpiredToken"
+    )
