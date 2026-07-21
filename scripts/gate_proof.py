@@ -689,7 +689,7 @@ ATTACKS: tuple[Attack, ...] = (
             "Removing the wheel library restores that failure."
         ),
         path="infra/bundles/resources/pipelines.yml",
-        old="        - whl: ../../../dist/fintelliguard-0.0.0-py3-none-any.whl\n",
+        old="          - ../../../dist/fintelliguard-0.0.0-py3-none-any.whl\n",
         new="",
         gate="tests/bundles/test_databricks_tasks.py",
         must_fail="test_the_dlt_pipeline_installs_the_repo_wheel",

@@ -27,11 +27,17 @@ resources:
       edition: ADVANCED
       channel: CURRENT
 
+      # The wheel goes in `environment.dependencies`, NOT `libraries`. A DLT pipeline rejects
+      # a whl library outright ("Whl libraries are not supported. Please remove them from the
+      # pipeline settings.", deploy run 29796983923) — the wheel built and uploaded fine, it
+      # was the attachment point that was wrong. `environment.dependencies` installs the
+      # package into the pipeline environment (driver + workers), which is what the
+      # applyInPandas workers need to import pipelines.* and ml.features.*.
+      environment:
+        dependencies:
+          - ../../../dist/fintelliguard-0.0.0-py3-none-any.whl
+
       libraries:
-        # The wheel FIRST: installed cluster-wide so both the driver and the applyInPandas
-        # worker processes can import pipelines.* and ml.features.*. Built by the
-        # `fintelliguard_wheel` artifact (see databricks.yml).
-        - whl: ../../../dist/fintelliguard-0.0.0-py3-none-any.whl
         - file:
             path: ../../../pipelines/bronze/bronze_pipeline.py
         - file:

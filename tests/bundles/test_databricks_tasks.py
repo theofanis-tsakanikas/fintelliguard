@@ -338,10 +338,16 @@ def test_the_dlt_pipeline_installs_the_repo_wheel():
     )
 
     pipeline = _yaml("infra/bundles/resources/pipelines.yml")["resources"]["pipelines"]["medallion"]
-    libraries = pipeline["libraries"]
-    assert any("whl" in lib for lib in libraries), (
-        "the DLT pipeline installs no wheel, so applyInPandas workers cannot import the "
-        "package and the pipeline fails at feature computation"
+    # In `environment.dependencies`, NOT `libraries`: a DLT pipeline rejects a whl library
+    # ("Whl libraries are not supported"), and the environment is where a wheel installs into
+    # the pipeline's driver+worker environment.
+    deps = pipeline.get("environment", {}).get("dependencies", [])
+    assert any(str(d).endswith(".whl") for d in deps), (
+        "the DLT pipeline environment installs no wheel, so applyInPandas workers cannot "
+        "import the package and the pipeline fails at feature computation"
+    )
+    assert not any("whl" in lib for lib in pipeline["libraries"]), (
+        "a whl is back in `libraries`, which the pipeline API rejects outright"
     )
 
 
