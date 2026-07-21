@@ -12,7 +12,7 @@ that could fail it has been removed before DLT looks.
 from __future__ import annotations
 
 import dlt
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 
 
 def _add_sync_root_to_path() -> None:
@@ -57,44 +57,50 @@ def _add_sync_root_to_path() -> None:
 
 _add_sync_root_to_path()
 
+from pipelines import runtime_config  # noqa: E402
 from pipelines.gold import gold_transforms  # noqa: E402
 
-
-# The `_gated` VIEWS carry no schema prefix, unlike every published table here. A DLT view
-# is session-scoped and not published to the catalog, and DLT rejects a qualified name on
-# one outright:
-#
-#     AnalysisException: View with multipart name 'gold.txn_features_realtime_gated'
-#     is not supported.
-#
-# CLAUDE.md's `gold.<name>` convention governs the PUBLISHED medallion tables — which keep
-# their prefixes below — not these internal staging views. The prefix was on all four gated
-# views and only surfaced on the pipeline's first real run.
-@dlt.view(
-    name="txn_features_realtime_gated",
-    comment="Serving features, tagged pass/fail. The DQ metric is measured here.",
-)
-@dlt.expect_all(gold_transforms.GOLD_GATES)
-def txn_features_realtime_gated() -> DataFrame:
-    # Unfiltered: a row that fails a gate must still be here for the expectation to see it.
-    features = gold_transforms.build_realtime_features(dlt.read("silver.transactions_clean"))
-    return gold_transforms.gate_features(features)
+# None locally; DLT provides it. Needed to read the streaming flag from Spark conf.
+spark = SparkSession.getActiveSession()
+STREAMING_ENABLED = runtime_config.streaming_enabled(spark)
 
 
-@dlt.table(
-    name="gold.txn_features_realtime",
-    comment="The 15 serving features from the stream (validated).",
-)
-def txn_features_realtime() -> DataFrame:
-    return gold_transforms.select_valid(dlt.read("txn_features_realtime_gated"))
+# Realtime (stream) lineage — registered only when streaming is on (see
+# runtime_config). The training lineage below is always built.
+if STREAMING_ENABLED:
+    # The `_gated` VIEWS carry no schema prefix, unlike every published table here. A DLT view
+    # is session-scoped and not published to the catalog, and DLT rejects a qualified name on
+    # one outright:
+    #
+    #     AnalysisException: View with multipart name 'gold.txn_features_realtime_gated'
+    #     is not supported.
+    #
+    # CLAUDE.md's `gold.<name>` convention governs the PUBLISHED medallion tables — which keep
+    # their prefixes below — not these internal staging views. The prefix was on all four gated
+    # views and only surfaced on the pipeline's first real run.
+    @dlt.view(
+        name="txn_features_realtime_gated",
+        comment="Serving features, tagged pass/fail. The DQ metric is measured here.",
+    )
+    @dlt.expect_all(gold_transforms.GOLD_GATES)
+    def txn_features_realtime_gated() -> DataFrame:
+        # Unfiltered: a row that fails a gate must still be here for the expectation to see it.
+        features = gold_transforms.build_realtime_features(dlt.read("silver.transactions_clean"))
+        return gold_transforms.gate_features(features)
 
+    @dlt.table(
+        name="gold.txn_features_realtime",
+        comment="The 15 serving features from the stream (validated).",
+    )
+    def txn_features_realtime() -> DataFrame:
+        return gold_transforms.select_valid(dlt.read("txn_features_realtime_gated"))
 
-@dlt.table(
-    name="gold.txn_features_realtime_quarantine",
-    comment="Realtime feature rows failing a gate, kept for inspection.",
-)
-def txn_features_realtime_quarantine() -> DataFrame:
-    return gold_transforms.select_quarantined(dlt.read("txn_features_realtime_gated"))
+    @dlt.table(
+        name="gold.txn_features_realtime_quarantine",
+        comment="Realtime feature rows failing a gate, kept for inspection.",
+    )
+    def txn_features_realtime_quarantine() -> DataFrame:
+        return gold_transforms.select_quarantined(dlt.read("txn_features_realtime_gated"))
 
 
 @dlt.view(

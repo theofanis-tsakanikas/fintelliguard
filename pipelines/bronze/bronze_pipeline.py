@@ -7,8 +7,6 @@ module is import/lint-validated only (see pipelines/README.md).
 
 from __future__ import annotations
 
-import os
-
 import dlt
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -56,6 +54,7 @@ def _add_sync_root_to_path() -> None:
 
 _add_sync_root_to_path()
 
+from pipelines import runtime_config  # noqa: E402
 from pipelines.bronze import bronze_transforms  # noqa: E402
 
 # Provided by Databricks at runtime; None locally (functions below are not called here).
@@ -63,27 +62,34 @@ spark = SparkSession.getActiveSession()
 
 KAFKA_TOPIC = "txn.raw"
 
-# The raw IEEE-CIS location is env-driven so it matches the Terraform-provisioned bucket
-# (`fintelliguard-raw-<account_id>`, exposed as the `raw_bucket_name` output in
-# infra/aws/outputs.tf). The DABs job injects `RAW_BUCKET` (or the full `IEEE_RAW_PATH`)
-# from that output — the old hardcoded `fintelliguard-raw` never matched the real bucket
-# name, so Auto Loader would 404 on the first real run.
-_RAW_BUCKET = os.environ.get("RAW_BUCKET", "fintelliguard-raw")
-IEEE_RAW_PATH = os.environ.get("IEEE_RAW_PATH", f"s3://{_RAW_BUCKET}/raw/ieee-cis/")
+# Read from Spark conf, not os.environ. DLT `configuration:` lands in Spark conf on the
+# pipeline cluster; os.environ never saw RAW_BUCKET, so Auto Loader defaulted to the wrong
+# bucket and schema inference failed. See pipelines/runtime_config.py.
+IEEE_RAW_PATH = runtime_config.ieee_raw_path(spark)
+KAFKA_BOOTSTRAP = runtime_config.kafka_bootstrap(spark)
+STREAMING_ENABLED = runtime_config.streaming_enabled(spark)
 
 
-@dlt.table(
-    name="bronze.transactions_stream",
-    comment="Raw simulator transactions from Kafka — schema-rescued, with ingest metadata.",
-)
-def transactions_stream() -> DataFrame:
-    raw = (
-        spark.readStream.format("kafka")
-        .option("subscribe", KAFKA_TOPIC)
-        .load()
-        .select(F.col("value").cast("string").alias("value"), F.col("offset").alias("offset"))
+# The Kafka stream lineage is registered only when streaming is enabled. A Kafka source with
+# no `bootstrap.servers` cannot even be analyzed — its mere declaration failed the whole
+# pipeline — and the training deploy brings up neither MSK nor the simulator. Default is ON
+# (see runtime_config); the training-only run sets `fintelliguard.streaming_enabled=false`.
+if STREAMING_ENABLED:
+
+    @dlt.table(
+        name="bronze.transactions_stream",
+        comment="Raw simulator transactions from Kafka — schema-rescued, with ingest metadata.",
     )
-    return bronze_transforms.parse_transactions_stream(raw)
+    def transactions_stream() -> DataFrame:
+        raw = (
+            spark.readStream.format("kafka")
+            # This option was simply absent, so even a configured MSK could not be reached.
+            .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
+            .option("subscribe", KAFKA_TOPIC)
+            .load()
+            .select(F.col("value").cast("string").alias("value"), F.col("offset").alias("offset"))
+        )
+        return bronze_transforms.parse_transactions_stream(raw)
 
 
 @dlt.table(

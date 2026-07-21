@@ -16,6 +16,19 @@ variables:
   catalog:
     description: Unity Catalog for FintelliGuard (infra/databricks catalog_name output).
     default: fintelliguard
+  raw_bucket:
+    description: >-
+      (deploy) Raw S3 bucket the DLT Auto Loader reads IEEE-CIS from. Resolved from the
+      infra/aws `raw_bucket_name` output at deploy time — the bucket carries an account-id
+      suffix, so a hardcoded default would point Auto Loader at a non-existent path and
+      schema inference would fail. Surfaced to the pipeline as `fintelliguard.raw_bucket`.
+    default: ""
+  streaming_enabled:
+    description: >-
+      Whether the Kafka stream lineage is part of the DLT pipeline. Default "false": the
+      training deploy brings up neither MSK nor the simulator, and a Kafka source with no
+      bootstrap servers cannot even be analyzed. Set "true" for a streaming run.
+    default: "false"
   warehouse_id:
     description: (deploy) SQL warehouse id backing Genie / query_lakehouse.
     default: ""

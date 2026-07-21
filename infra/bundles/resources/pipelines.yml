@@ -37,3 +37,7 @@ resources:
 
       configuration:
         fintelliguard.catalog: ${var.catalog}
+        # DLT configuration arrives as SPARK CONF on the pipeline cluster (not env
+        # vars). The bronze layer reads these via pipelines/runtime_config.py.
+        fintelliguard.raw_bucket: ${var.raw_bucket}
+        fintelliguard.streaming_enabled: ${var.streaming_enabled}

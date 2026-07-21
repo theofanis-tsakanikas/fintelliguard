@@ -320,7 +320,14 @@ jobs:
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-        run: databricks bundle deploy -t ${{ inputs.environment }}
+        # raw_bucket is resolved from the layer that owns it, never pasted: the bucket name
+        # carries an account-id suffix, and the DLT Auto Loader reads IEEE-CIS from it. Without
+        # this the pipeline's schema inference fails on a non-existent path.
+        run: |
+          set -euo pipefail
+          raw_bucket="$(terraform -chdir=../../infra/aws output -raw raw_bucket_name)"
+          databricks bundle deploy -t ${{ inputs.environment }} \
+            --var="raw_bucket=${raw_bucket}"
 
       # ---- The ML chain -------------------------------------------------------------------
       #

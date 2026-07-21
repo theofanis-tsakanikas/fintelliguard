@@ -28,7 +28,7 @@ It also stops `cleanse_*` being computed twice per update, once per table.
 from __future__ import annotations
 
 import dlt
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 
 
 def _add_sync_root_to_path() -> None:
@@ -73,34 +73,41 @@ def _add_sync_root_to_path() -> None:
 
 _add_sync_root_to_path()
 
+from pipelines import runtime_config  # noqa: E402
 from pipelines.silver import silver_transforms  # noqa: E402
 
-
-@dlt.view(
-    name="transactions_gated",
-    comment="Cleansed stream transactions, tagged pass/fail. The DQ metric is measured here.",
-)
-@dlt.expect_all(silver_transforms.SILVER_TXN_GATES)
-def transactions_gated() -> DataFrame:
-    # Unfiltered on purpose: a row that fails a gate must still BE here, or the expectation
-    # below has nothing to fail on.
-    return silver_transforms.cleanse_transactions(dlt.read_stream("bronze.transactions_stream"))
+# None locally; DLT provides it. Needed to read the streaming flag from Spark conf.
+spark = SparkSession.getActiveSession()
+STREAMING_ENABLED = runtime_config.streaming_enabled(spark)
 
 
-@dlt.table(
-    name="silver.transactions_clean",
-    comment="Cleansed, typed, enriched stream transactions (validated).",
-)
-def transactions_clean() -> DataFrame:
-    return silver_transforms.select_valid(dlt.read_stream("transactions_gated"))
+# Stream lineage — registered only when streaming is on (see runtime_config). The
+# batch/IEEE tables below are always built; the training deploy needs only those.
+if STREAMING_ENABLED:
 
+    @dlt.view(
+        name="transactions_gated",
+        comment="Cleansed stream transactions, tagged pass/fail. The DQ metric is measured here.",
+    )
+    @dlt.expect_all(silver_transforms.SILVER_TXN_GATES)
+    def transactions_gated() -> DataFrame:
+        # Unfiltered on purpose: a row that fails a gate must still BE here, or the expectation
+        # below has nothing to fail on.
+        return silver_transforms.cleanse_transactions(dlt.read_stream("bronze.transactions_stream"))
 
-@dlt.table(
-    name="silver.transactions_quarantine",
-    comment="Stream transactions that failed a silver gate, kept for inspection.",
-)
-def transactions_quarantine() -> DataFrame:
-    return silver_transforms.select_quarantined(dlt.read_stream("transactions_gated"))
+    @dlt.table(
+        name="silver.transactions_clean",
+        comment="Cleansed, typed, enriched stream transactions (validated).",
+    )
+    def transactions_clean() -> DataFrame:
+        return silver_transforms.select_valid(dlt.read_stream("transactions_gated"))
+
+    @dlt.table(
+        name="silver.transactions_quarantine",
+        comment="Stream transactions that failed a silver gate, kept for inspection.",
+    )
+    def transactions_quarantine() -> DataFrame:
+        return silver_transforms.select_quarantined(dlt.read_stream("transactions_gated"))
 
 
 @dlt.view(

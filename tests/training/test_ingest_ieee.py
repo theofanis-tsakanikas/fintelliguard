@@ -97,7 +97,10 @@ def test_the_prefix_matches_what_the_dlt_pipeline_reads():
     """A mismatch here is invisible: the upload succeeds and Auto Loader finds an empty path,
     so the pipeline produces zero rows and the failure surfaces two steps later in training.
     """
+    # The read path is now DERIVED in runtime_config.ieee_raw_path (from the injected bucket),
+    # not hardcoded in the bronze module — so the literal lives there. The invariant is
+    # unchanged: what the ingester uploads under must be what Auto Loader reads.
     root = Path(__file__).resolve().parents[2]
-    bronze = (root / "pipelines" / "bronze" / "bronze_pipeline.py").read_text("utf-8")
-    assert "raw/ieee-cis/" in bronze, "the bronze pipeline no longer reads raw/ieee-cis/"
+    reader = (root / "pipelines" / "runtime_config.py").read_text("utf-8")
+    assert "raw/ieee-cis/" in reader, "runtime_config no longer derives the raw/ieee-cis/ path"
     assert ingest_ieee.PREFIX == "raw/ieee-cis/"

@@ -261,20 +261,22 @@ ATTACKS: tuple[Attack, ...] = (
             "would have read 100% during a total upstream corruption event."
         ),
         path="pipelines/silver/silver_pipeline.py",
+        # Indented under `if STREAMING_ENABLED:` since the stream lineage was gated — the
+        # body sits at 8 spaces now, and this attack must match that or it goes STALE.
         old=(
-            "def transactions_gated() -> DataFrame:\n"
-            "    # Unfiltered on purpose: a row that fails a gate must still BE here, or the"
-            " expectation\n"
-            "    # below has nothing to fail on.\n"
-            "    return silver_transforms.cleanse_transactions("
+            "    def transactions_gated() -> DataFrame:\n"
+            "        # Unfiltered on purpose: a row that fails a gate must still BE here, or"
+            " the expectation\n"
+            "        # below has nothing to fail on.\n"
+            "        return silver_transforms.cleanse_transactions("
             'dlt.read_stream("bronze.transactions_stream"))'
         ),
         new=(
-            "def transactions_gated() -> DataFrame:\n"
-            "    return silver_transforms.select_valid(\n"
-            "        silver_transforms.cleanse_transactions("
+            "    def transactions_gated() -> DataFrame:\n"
+            "        return silver_transforms.select_valid(\n"
+            "            silver_transforms.cleanse_transactions("
             'dlt.read_stream("bronze.transactions_stream"))\n'
-            "    )"
+            "        )"
         ),
         gate="tests/pipelines/test_dq_expectations.py",
         must_fail="test_the_dq_metric_can_be_less_than_one_hundred_percent",
@@ -676,6 +678,21 @@ ATTACKS: tuple[Attack, ...] = (
         new="    sys.exit(main())",
         gate="tests/bundles/test_databricks_tasks.py",
         must_fail="test_a_task_script_never_calls_sys_exit",
+    ),
+    Attack(
+        name="kafka-stream-cannot-be-disabled-for-a-batch-run",
+        rationale=(
+            "The Kafka stream lineage and the IEEE batch lineage share one pipeline. A Kafka "
+            "source with no bootstrap servers cannot even be ANALYZED, so its declaration "
+            "failed the whole pipeline — including the batch tables the training job needs. "
+            "The stream lineage must be gated so a batch-only run omits it. Removing the "
+            "guard puts the un-analyzable Kafka table back into every run."
+        ),
+        path="pipelines/bronze/bronze_pipeline.py",
+        old='if STREAMING_ENABLED:\n\n    @dlt.table(\n        name="bronze.transactions_stream",',
+        new='if True:\n\n    @dlt.table(\n        name="bronze.transactions_stream",',
+        gate="tests/pipelines/test_streaming_guard.py",
+        must_fail="test_streaming_off_registers_only_the_batch_lineage",
     ),
     Attack(
         name="dlt-view-with-a-schema-prefix",
