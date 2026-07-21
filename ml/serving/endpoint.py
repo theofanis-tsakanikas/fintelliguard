@@ -13,6 +13,7 @@ predict-able artifact.
 from __future__ import annotations
 
 import os
+import pathlib
 import tempfile
 from typing import Any
 
@@ -26,6 +27,9 @@ from ml.features.schema import FEATURE_SPECS
 from ml.serving.scorer import FraudScorer, ScoringConfig
 
 _XGB_ARTIFACT = "xgb_model"
+# The `ml/` package directory, bundled into the model so the serving container can import
+# it. Resolved from THIS file: ml/serving/endpoint.py -> parents[1] is ml/.
+_ML_PACKAGE_DIR = str(pathlib.Path(__file__).resolve().parents[1])
 
 
 class FraudScoringModel(mlflow.pyfunc.PythonModel):
@@ -110,5 +114,13 @@ def log_scoring_model(
             registered_model_name=registered_model_name,
             signature=signature,
             input_example=example_input,
+            # Ship the `ml` package INSIDE the model. FraudScoringModel is pickled with a
+            # reference to `ml.serving.endpoint`, and it imports `ml.serving.scorer` ->
+            # `ml.features.*`; the serving container has none of that on its path, so the
+            # model failed to load and the endpoint reached UPDATE_FAILED after ~10 minutes
+            # (deploy run 29808739561). `code_paths` copies `ml/` into the artifact and puts
+            # it on sys.path at load. The package is self-contained (stdlib + numpy/pandas/
+            # xgboost/mlflow), so `ml/` alone is enough — no pipelines/agents/simulator.
+            code_paths=[_ML_PACKAGE_DIR],
         )
         return f"runs:/{run.info.run_id}/{artifact_path}"

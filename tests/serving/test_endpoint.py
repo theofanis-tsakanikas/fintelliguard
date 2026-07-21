@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import mlflow
+import mlflow.artifacts
 import pandas as pd
 
 from ml.serving.endpoint import log_scoring_model
@@ -28,6 +31,19 @@ def test_pyfunc_logs_loads_and_predicts_contract(trained_xgb, tmp_path):
     input_types = {c.name: c.type.name for c in signature.inputs.inputs}
     assert input_types["country_mismatch"] == "boolean", (
         "a bool feature is typed non-bool in the signature — serving input would be rejected"
+    )
+
+    # The `ml` package must travel INSIDE the model. FraudScoringModel is pickled with a
+    # reference to `ml.serving.endpoint` and imports `ml.serving.scorer` -> `ml.features.*`;
+    # the serving container has none of that on its path, so without code_paths the model
+    # fails to load and the endpoint reaches UPDATE_FAILED (deploy run 29808739561). Check the
+    # artifact carries the code, not just that the round-trip worked in-process (where `ml` is
+    # already importable and would mask the omission).
+    local = mlflow.artifacts.download_artifacts(model_uri)
+    bundled = pathlib.Path(local) / "code" / "ml" / "serving" / "endpoint.py"
+    assert bundled.is_file(), (
+        "the model artifact does not bundle the `ml` package (code_paths) — the serving "
+        "container cannot import FraudScoringModel and the endpoint fails to start"
     )
 
     other = {**SAMPLE_FEATURES, "country_mismatch": False, "amount_zscore": -0.5}

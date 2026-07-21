@@ -680,6 +680,20 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="model-logged-without-its-code",
+        rationale=(
+            "FraudScoringModel is pickled with a reference to ml.serving.endpoint and imports "
+            "ml.serving.scorer -> ml.features.*; the serving container has none of that. "
+            "Without code_paths the model cannot load and the endpoint reaches UPDATE_FAILED "
+            "after ~10 minutes. Dropping code_paths restores that."
+        ),
+        path="ml/serving/endpoint.py",
+        old="            code_paths=[_ML_PACKAGE_DIR],\n",
+        new="",
+        gate="tests/serving/test_endpoint.py",
+        must_fail="test_pyfunc_logs_loads_and_predicts_contract",
+    ),
+    Attack(
         name="model-logged-without-a-signature",
         rationale=(
             "Unity Catalog refuses to register a model with no signature, AFTER it has been "
