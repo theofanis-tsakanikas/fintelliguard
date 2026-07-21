@@ -191,7 +191,7 @@ def test_the_ml_chain_runs_in_dependency_order():
 def test_serving_is_pinned_to_the_promoted_version_not_the_latest():
     """The one assertion that keeps the promotion gate real.
 
-    `evaluate_promotion` rejects a model below AUC-ROC 0.92 or fraud precision 0.85, and a
+    `evaluate_promotion` rejects a model below AUC-ROC 0.83 or fraud precision 0.85, and a
     rejected model is still REGISTERED — it just never takes the `production` alias. Deploying
     "the latest version" would therefore serve precisely the model the gate refused, while the
     gate's own logs still read REJECT. The endpoint must be pinned by alias.

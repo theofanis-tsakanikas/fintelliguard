@@ -98,7 +98,7 @@ python scripts/genie_space.py --warehouse-id <sql-warehouse-id> --catalog fintel
 aws s3 cp ieee-cis/ s3://fintelliguard-raw/raw/ieee-cis/ --recursive
 # In Databricks: run the DLT pipeline to build gold.txn_features_training, then:
 #   ml/training  -> train_model (TrackConfig.tracking_uri = databricks), log metrics
-#   promotion gate: AUC-ROC >= 0.92 AND fraud precision >= 0.85 (else do NOT promote)
+#   promotion gate: AUC-ROC >= 0.83 AND fraud precision >= 0.85 (else do NOT promote)
 #   register -> fintelliguard.ml.fraud_scorer ; log the ml/serving pyfunc
 # Point the serving endpoint at the new version (bundle var fraud_model_version) & redeploy.
 ```

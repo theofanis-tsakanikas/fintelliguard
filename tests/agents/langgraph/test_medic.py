@@ -114,7 +114,7 @@ def test_rollback_never_promotes_a_staging_version(mlflow_client):
 
     `candidates` includes Staging. `max` takes the highest VERSION NUMBER, not the previous
     Production one. So with v2 serving and v3 sitting in Staging having failed the
-    AUC >= 0.92 gate, a p99 blip promoted **v3** — archiving the good model on the way past.
+    AUC >= 0.83 gate, a p99 blip promoted **v3** — archiving the good model on the way past.
     An untested fraud model decides real payments, no human involved, in direct violation of
     the promotion policy this project calls non-negotiable.
 

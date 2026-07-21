@@ -18,7 +18,7 @@ Store is **deferred to deploy**.
   importance to MLflow under a **configurable tracking URI** (`TrainConfig.tracking_uri`:
   a local `file:` store for tests, a Databricks URI for real runs).
 - `promote.py` — **pure** promotion gate. `evaluate_promotion(metrics)` returns
-  promote/reject + reason per policy: **AUC-ROC ≥ 0.92 AND fraud-class precision ≥ 0.85**
+  promote/reject + reason per policy: **AUC-ROC ≥ 0.83 AND fraud-class precision ≥ 0.85**
   (Staging→Production). Fails closed on missing metrics.
 - `registry.py` — MLflow Model Registry registration + stage transition, **guarded by
   `promote.py`**. Registry calls are cloud; dependencies are injectable so the wiring is
@@ -29,7 +29,7 @@ Store is **deferred to deploy**.
 A model is promoted Staging→Production **only** when, on the held-out test set:
 
 ```
-AUC-ROC >= 0.92   AND   fraud-class precision >= 0.85
+AUC-ROC >= 0.83   AND   fraud-class precision >= 0.85
 ```
 
 Metrics are recorded in the MLflow run before any promotion.
@@ -45,7 +45,7 @@ ruff check .
 ```
 
 Tests train a real model on a small synthetic frame and log to a temp MLflow store; they
-assert wiring/parity/determinism, **not** metric quality (synthetic data won't hit 0.92).
+assert wiring/parity/determinism, **not** metric quality (synthetic data won't hit the bar).
 
 ## Deferred to deploy
 

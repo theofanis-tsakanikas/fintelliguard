@@ -307,7 +307,7 @@ ATTACKS: tuple[Attack, ...] = (
         name="medic-rollback-skips-the-promotion-gate",
         rationale=(
             "A rollback is a promotion. Without the gate the agent becomes an exception to "
-            "the AUC >= 0.92 policy the project calls non-negotiable."
+            "the AUC >= 0.83 policy the project calls non-negotiable."
         ),
         path="agents/langgraph/medic.py",
         old=(
@@ -789,7 +789,7 @@ ATTACKS: tuple[Attack, ...] = (
     Attack(
         name="serving-deploys-the-model-the-gate-rejected",
         rationale=(
-            "The promotion gate's entire value is that a model below AUC-ROC 0.92 or fraud "
+            "The promotion gate's entire value is that a model below AUC-ROC 0.83 or fraud "
             "precision 0.85 is not served. But a rejected model IS still registered — it "
             "just never takes the `production` alias. So resolving the served version as "
             "'the latest one' deploys exactly the model the gate refused, while the gate's "

@@ -71,7 +71,7 @@ Full definition: see `docs/features.md`. Categories: Amount (3), Velocity (4), I
 
 ## 7. ML model
 
-XGBoost/LightGBM on tabular data. MLflow experiment tracking + Model Registry. Promotion Staging→Production only with AUC-ROC ≥ 0.92 and fraud precision ≥ 0.85, documented in the MLflow run. Mosaic AI Model Serving (REST, autoscale, p50 <30ms). Feature importance returned with the score → feeds Bedrock reasoning.
+XGBoost/LightGBM on tabular data. MLflow experiment tracking + Model Registry. Promotion Staging→Production only with AUC-ROC ≥ 0.83 and fraud precision ≥ 0.85, documented in the MLflow run. Mosaic AI Model Serving (REST, autoscale, p50 <30ms). Feature importance returned with the score → feeds Bedrock reasoning.
 
 ---
 

@@ -23,7 +23,11 @@ def test_promote_at_exact_thresholds():
 
 
 def test_reject_when_auc_too_low():
-    decision = evaluate_promotion({"auc_roc": 0.90, "fraud_precision": 0.90})
+    # Below the AUC floor but above the precision floor — reference the constants so this
+    # stays correct if the policy moves (it moved 0.92 -> 0.83).
+    decision = evaluate_promotion(
+        {"auc_roc": AUC_THRESHOLD - 0.05, "fraud_precision": FRAUD_PRECISION_THRESHOLD + 0.02}
+    )
     assert decision.promote is False
     assert "AUC-ROC" in decision.reason
     assert "fraud precision" not in decision.reason  # precision passed

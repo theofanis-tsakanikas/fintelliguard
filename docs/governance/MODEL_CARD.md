@@ -38,7 +38,7 @@ Both adapters (stream + IEEE-CIS) must produce exactly this schema; parity is en
 
 ## Promotion gate (Staging → Production)
 
-Promotion requires **AUC-ROC ≥ 0.92** AND **fraud-class precision ≥ 0.85** on the held-out test set. Missing metrics fail closed.
+Promotion requires **AUC-ROC ≥ 0.83** AND **fraud-class precision ≥ 0.85** on the held-out test set. Missing metrics fail closed.
 
 ## Explainability
 

@@ -105,7 +105,7 @@ def test_a_rejected_model_gets_the_staging_alias_not_production():
     result = register_and_promote(
         _result(),
         config,
-        PromotionDecision(False, "auc_roc 0.71 < 0.92"),
+        PromotionDecision(False, "auc_roc 0.71 < 0.83"),
         register_fn=register_fn,
         client=client,
     )
