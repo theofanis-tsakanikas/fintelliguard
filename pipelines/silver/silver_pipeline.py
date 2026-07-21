@@ -77,7 +77,7 @@ from pipelines.silver import silver_transforms  # noqa: E402
 
 
 @dlt.view(
-    name="silver.transactions_gated",
+    name="transactions_gated",
     comment="Cleansed stream transactions, tagged pass/fail. The DQ metric is measured here.",
 )
 @dlt.expect_all(silver_transforms.SILVER_TXN_GATES)
@@ -92,7 +92,7 @@ def transactions_gated() -> DataFrame:
     comment="Cleansed, typed, enriched stream transactions (validated).",
 )
 def transactions_clean() -> DataFrame:
-    return silver_transforms.select_valid(dlt.read_stream("silver.transactions_gated"))
+    return silver_transforms.select_valid(dlt.read_stream("transactions_gated"))
 
 
 @dlt.table(
@@ -100,11 +100,11 @@ def transactions_clean() -> DataFrame:
     comment="Stream transactions that failed a silver gate, kept for inspection.",
 )
 def transactions_quarantine() -> DataFrame:
-    return silver_transforms.select_quarantined(dlt.read_stream("silver.transactions_gated"))
+    return silver_transforms.select_quarantined(dlt.read_stream("transactions_gated"))
 
 
 @dlt.view(
-    name="silver.ieee_cis_gated",
+    name="ieee_cis_gated",
     comment="Typed IEEE-CIS rows, tagged pass/fail. The DQ metric is measured here.",
 )
 @dlt.expect_all(silver_transforms.SILVER_IEEE_GATES)
@@ -117,7 +117,7 @@ def ieee_cis_gated() -> DataFrame:
     comment="Typed, imputed IEEE-CIS rows for training (validated).",
 )
 def ieee_cis_clean() -> DataFrame:
-    return silver_transforms.select_valid(dlt.read("silver.ieee_cis_gated"))
+    return silver_transforms.select_valid(dlt.read("ieee_cis_gated"))
 
 
 @dlt.table(
@@ -125,4 +125,4 @@ def ieee_cis_clean() -> DataFrame:
     comment="IEEE-CIS rows that failed a silver gate, kept for inspection.",
 )
 def ieee_cis_quarantine() -> DataFrame:
-    return silver_transforms.select_quarantined(dlt.read("silver.ieee_cis_gated"))
+    return silver_transforms.select_quarantined(dlt.read("ieee_cis_gated"))

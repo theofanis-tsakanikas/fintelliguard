@@ -60,8 +60,18 @@ _add_sync_root_to_path()
 from pipelines.gold import gold_transforms  # noqa: E402
 
 
+# The `_gated` VIEWS carry no schema prefix, unlike every published table here. A DLT view
+# is session-scoped and not published to the catalog, and DLT rejects a qualified name on
+# one outright:
+#
+#     AnalysisException: View with multipart name 'gold.txn_features_realtime_gated'
+#     is not supported.
+#
+# CLAUDE.md's `gold.<name>` convention governs the PUBLISHED medallion tables — which keep
+# their prefixes below — not these internal staging views. The prefix was on all four gated
+# views and only surfaced on the pipeline's first real run.
 @dlt.view(
-    name="gold.txn_features_realtime_gated",
+    name="txn_features_realtime_gated",
     comment="Serving features, tagged pass/fail. The DQ metric is measured here.",
 )
 @dlt.expect_all(gold_transforms.GOLD_GATES)
@@ -76,7 +86,7 @@ def txn_features_realtime_gated() -> DataFrame:
     comment="The 15 serving features from the stream (validated).",
 )
 def txn_features_realtime() -> DataFrame:
-    return gold_transforms.select_valid(dlt.read("gold.txn_features_realtime_gated"))
+    return gold_transforms.select_valid(dlt.read("txn_features_realtime_gated"))
 
 
 @dlt.table(
@@ -84,11 +94,11 @@ def txn_features_realtime() -> DataFrame:
     comment="Realtime feature rows failing a gate, kept for inspection.",
 )
 def txn_features_realtime_quarantine() -> DataFrame:
-    return gold_transforms.select_quarantined(dlt.read("gold.txn_features_realtime_gated"))
+    return gold_transforms.select_quarantined(dlt.read("txn_features_realtime_gated"))
 
 
 @dlt.view(
-    name="gold.txn_features_training_gated",
+    name="txn_features_training_gated",
     comment="Training features, tagged pass/fail. The DQ metric is measured here.",
 )
 @dlt.expect_all(gold_transforms.GOLD_GATES)
@@ -102,4 +112,4 @@ def txn_features_training_gated() -> DataFrame:
     comment="The same 15 features + isFraud label, from IEEE-CIS (validated).",
 )
 def txn_features_training() -> DataFrame:
-    return gold_transforms.select_valid(dlt.read("gold.txn_features_training_gated"))
+    return gold_transforms.select_valid(dlt.read("txn_features_training_gated"))

@@ -107,12 +107,12 @@ def test_the_expectation_is_attached_to_a_frame_that_still_contains_failures(sil
     input for which it is anything else.
     """
     recorder, _module = silver_dq
-    assert "silver.transactions_gated" in recorder.expectations, (
+    assert "transactions_gated" in recorder.expectations, (
         "the transaction gates are not measured on a gated view — if they are back on the "
         "clean table, they are measured on rows that have already been filtered"
     )
 
-    _gates, fn = recorder.expectations["silver.transactions_gated"]
+    _gates, fn = recorder.expectations["transactions_gated"]
     measured = fn().collect()
 
     reasons = {r["transaction_id"]: r[QUARANTINE_COL] for r in measured}
@@ -126,7 +126,7 @@ def test_the_expectation_is_attached_to_a_frame_that_still_contains_failures(sil
 def test_the_dq_metric_can_be_less_than_one_hundred_percent(silver_dq):
     """The property that was arithmetically impossible before."""
     recorder, _module = silver_dq
-    _gates, fn = recorder.expectations["silver.transactions_gated"]
+    _gates, fn = recorder.expectations["transactions_gated"]
 
     measured = fn()
     total = measured.count()
@@ -146,7 +146,7 @@ def test_the_clean_table_still_contains_only_clean_rows(silver_dq):
     expectation is what measures. Both, in the right places.
     """
     recorder, module = silver_dq
-    _gates, gated_fn = recorder.expectations["silver.transactions_gated"]
+    _gates, gated_fn = recorder.expectations["transactions_gated"]
     recorder.source = gated_fn()  # the clean table reads from the gated view
 
     clean = module.transactions_clean().collect()
@@ -162,5 +162,5 @@ def test_gold_gates_are_measured_on_an_unfiltered_frame_too(spark):
     recorder.install()
     importlib.reload(importlib.import_module("pipelines.gold.gold_pipeline"))
 
-    assert "gold.txn_features_realtime_gated" in recorder.expectations
-    assert "gold.txn_features_training_gated" in recorder.expectations
+    assert "txn_features_realtime_gated" in recorder.expectations
+    assert "txn_features_training_gated" in recorder.expectations

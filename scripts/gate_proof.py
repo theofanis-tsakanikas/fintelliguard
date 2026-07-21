@@ -678,6 +678,21 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="dlt-view-with-a-schema-prefix",
+        rationale=(
+            "A DLT view is session-scoped and DLT rejects a multipart name on it — "
+            "'View with multipart name gold.X is not supported'. All four gated views "
+            "shipped with a prefix and it surfaced only on the pipeline's first real run, "
+            "because the local tests register decorators through a stub that accepts any "
+            "name. The one rule DLT enforces was the one rule nothing checked."
+        ),
+        path="pipelines/gold/gold_pipeline.py",
+        old='    name="txn_features_realtime_gated",',
+        new='    name="gold.txn_features_realtime_gated",',
+        gate="tests/pipelines/test_dlt_naming.py",
+        must_fail="test_no_dlt_view_carries_a_schema_prefix",
+    ),
+    Attack(
         name="dlt-source-uses-a-relative-import",
         rationale=(
             "All three medallion pipelines opened with `from . import <layer>_transforms`. "
