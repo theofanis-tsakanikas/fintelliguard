@@ -35,6 +35,35 @@ resource "aws_s3_bucket_public_access_block" "raw" {
   restrict_public_buckets = true
 }
 
+# A zero-byte marker so the `raw/` prefix EXISTS before Unity Catalog validates it.
+#
+# `infra/databricks` creates a READ-ONLY external location over s3://<this-bucket>/raw, and UC
+# validates it at creation by LISTING the prefix. A writable location passes validation by
+# writing a probe file (which creates the prefix); a read_only one cannot, so it needs the
+# prefix to already exist. An S3 prefix does not exist until an object is written under it, and
+# the IEEE-CIS data lands in `raw/ieee-cis/` only at a LATER deploy step — so on a clean estate
+# the prefix is absent when UC validates, and the location fails with
+#
+#     AWS IAM role does not have LIST permissions on url s3://.../raw ...
+#     No such file or directory: s3://.../raw
+#
+# a path-existence error UC reports as a permissions one. Earlier deploys passed only because
+# the bucket still held data from a prior iteration; a fully torn-down estate exposed it
+# (deploy run 29876467301). The marker sits at `raw/.uc-keep`, NOT under `raw/ieee-cis/`, so the
+# DLT Auto Loader that globs `raw/ieee-cis/*.csv` never sees it.
+resource "aws_s3_object" "raw_prefix_marker" {
+  bucket  = aws_s3_bucket.raw.id
+  key     = "raw/.uc-keep"
+  content = ""
+
+  # Match the bucket's default encryption so the UC storage-credential role — which is granted
+  # decrypt on exactly this CMK — can read the marker during validation.
+  server_side_encryption = "aws:kms"
+  kms_key_id             = aws_kms_key.main.arn
+
+  depends_on = [aws_s3_bucket_server_side_encryption_configuration.raw]
+}
+
 resource "aws_s3_bucket_lifecycle_configuration" "raw" {
   bucket = aws_s3_bucket.raw.id
 

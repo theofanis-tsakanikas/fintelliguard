@@ -1228,6 +1228,21 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/agents/databricks/test_case_seed.py",
         must_fail="test_every_archetype_carries_both_outcomes",
     ),
+    Attack(
+        name="raw-external-location-prefix-unseeded",
+        rationale=(
+            "What shipped: the read_only raw external location was created with nothing "
+            "seeding its S3 prefix, so on a clean estate UC validated a path that did not "
+            "exist yet and the whole infra/databricks layer failed with a 'No such file or "
+            "directory' that reads as a permissions bug (deploy run 29876467301). Repointing "
+            "the marker at a different prefix leaves the location's prefix unseeded again."
+        ),
+        path="infra/aws/s3.tf",
+        old='  key     = "raw/.uc-keep"',
+        new='  key     = "unseeded/.uc-keep"',
+        gate="tests/infra/test_uc_external_locations.py",
+        must_fail="test_readonly_external_location_prefixes_are_seeded_by_a_marker_object",
+    ),
 )
 
 
