@@ -24,6 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ml.training.fingerprint import FINGERPRINT_TAG, compute_fingerprint
 from ml.training.promote import PromotionDecision
 from ml.training.train import TrainConfig, TrainingResult
 
@@ -71,6 +72,7 @@ def register_and_promote(
     register_fn: Callable[[str, str], Any] | None = None,
     client: Any | None = None,
     model_uri: str | None = None,
+    fingerprint: str | None = None,
 ) -> RegistrationResult:
     """Register a model and promote it per `decision`.
 
@@ -98,6 +100,19 @@ def register_and_promote(
         client = client or MlflowClient(tracking_uri=config.tracking_uri, registry_uri=registry_uri)
 
     version = register_fn(model_uri or f"runs:/{result.run_id}/model", name)
+
+    # Tag the version with the fingerprint of the code that produced it, so a later deploy can
+    # tell whether an identical model already holds production and skip a needless retrain
+    # (see `ml.training.reuse_decision`). Tagged for BOTH registries and BEFORE aliasing: the
+    # reuse check reads the tag off whatever version the alias points at, so the tag must be
+    # present the moment the alias is set. `fingerprint` is injectable for tests; by default it
+    # is computed from the source on the box doing the registration.
+    client.set_model_version_tag(
+        name=name,
+        version=version.version,
+        key=FINGERPRINT_TAG,
+        value=fingerprint if fingerprint is not None else compute_fingerprint(),
+    )
 
     if unity_catalog:
         alias = target_alias(decision)

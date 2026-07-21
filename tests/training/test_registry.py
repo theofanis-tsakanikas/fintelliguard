@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
+from ml.training.fingerprint import FINGERPRINT_TAG
 from ml.training.promote import PromotionDecision
 from ml.training.registry import (
     RegistrationResult,
@@ -126,3 +127,76 @@ def test_the_classic_registry_still_uses_stages():
 
     client.set_registered_model_alias.assert_not_called()
     assert client.transition_model_version_stage.call_args.kwargs["stage"] == "Production"
+
+
+# --------------------------------------------------------------------------- #
+# The content fingerprint — what lets a later deploy skip a needless retrain
+# --------------------------------------------------------------------------- #
+
+
+def test_the_registered_version_is_tagged_with_the_content_fingerprint():
+    """`reuse_decision` reads this tag off the aliased version; without it, every deploy would
+    fail to confirm reuse and retrain. The fingerprint is injected here so the test does not
+    depend on the repo's current source hash."""
+    client = Mock()
+    register_fn = Mock(return_value=Mock(version="7"))
+    config = TrainConfig(registered_model_name="fintelliguard.ml.fraud_scorer")
+
+    register_and_promote(
+        _result(),
+        config,
+        PromotionDecision(True, "ok"),
+        register_fn=register_fn,
+        client=client,
+        fingerprint="fp-abc123",
+    )
+
+    kwargs = client.set_model_version_tag.call_args.kwargs
+    assert kwargs == {
+        "name": "fintelliguard.ml.fraud_scorer",
+        "version": "7",
+        "key": FINGERPRINT_TAG,
+        "value": "fp-abc123",
+    }
+
+
+def test_the_fingerprint_tag_is_set_before_the_alias_is_assigned():
+    """The reuse check reads the tag off whatever version the alias points at, so the tag must
+    exist the instant the alias is set — tagging after would leave a race where a deploy sees a
+    promoted-but-untagged version and retrains."""
+    calls = []
+    client = Mock()
+    client.set_model_version_tag.side_effect = lambda **_: calls.append("tag")
+    client.set_registered_model_alias.side_effect = lambda **_: calls.append("alias")
+    register_fn = Mock(return_value=Mock(version="7"))
+    config = TrainConfig(registered_model_name="fintelliguard.ml.fraud_scorer")
+
+    register_and_promote(
+        _result(),
+        config,
+        PromotionDecision(True, "ok"),
+        register_fn=register_fn,
+        client=client,
+        fingerprint="fp-abc123",
+    )
+
+    assert calls == ["tag", "alias"], f"tag must precede alias, got {calls}"
+
+
+def test_a_rejected_model_is_also_fingerprinted():
+    """A staging model can be promoted later by a deploy that finds its fingerprint current, so
+    it must carry the tag too."""
+    client = Mock()
+    register_fn = Mock(return_value=Mock(version="8"))
+    config = TrainConfig(registered_model_name="fintelliguard.ml.fraud_scorer")
+
+    register_and_promote(
+        _result(),
+        config,
+        PromotionDecision(False, "auc too low"),
+        register_fn=register_fn,
+        client=client,
+        fingerprint="fp-xyz",
+    )
+
+    assert client.set_model_version_tag.call_args.kwargs["value"] == "fp-xyz"

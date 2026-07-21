@@ -142,15 +142,85 @@ def test_deploy_has_environment_input_and_ordered_layers():
     doc = _load("deploy")
     assert "environment" in _triggers(doc)["workflow_dispatch"]["inputs"]
     # Each layer consumes the previous one's remote-state outputs, so the order is a
-    # contract, not a preference. Plan and apply share one TF_LAYERS list precisely so the
-    # two can never drift apart.
-    assert doc["env"]["TF_LAYERS"].split() == [
-        "infra/aws",
-        "infra/databricks",
-        "agents/bedrock/terraform",
-    ]
+    # contract, not a preference. The list now lives in the apply step's shell (a `layers=`
+    # selection by input) rather than a shared env var, but the FULL order — and the fact
+    # that `core` drops only the Bedrock layer without reordering the rest — must hold. The
+    # ordered literal itself encodes the order, so its presence is the assertion.
+    apply_script = _run_script(doc["jobs"]["apply"])
+    assert 'layers="infra/aws infra/databricks agents/bedrock/terraform"' in apply_script, (
+        "the full deploy no longer applies the three layers in dependency order"
+    )
+    assert 'layers="infra/aws infra/databricks"' in apply_script, (
+        "core no longer applies the two base layers (without Bedrock) in order"
+    )
     # The bundle is step 4 and lives outside the Terraform loop.
     assert "bundle deploy" in _text("deploy")
+
+
+def test_deploy_defaults_to_core_so_aoss_is_not_billed_during_tier1_work():
+    """The Bedrock layer owns the OpenSearch Serverless collection — the single always-on
+    resource that bills 24/7 for as long as it stands, queried or not. Tier 2 is not wired
+    yet, so deploying it during Tier 1/3 work is pure cost. `layers` therefore defaults to
+    `core`, and `core` must neither apply agents/bedrock/terraform nor run the corpus load
+    that reads its outputs.
+    """
+    doc = _load("deploy")
+    layers_input = _triggers(doc)["workflow_dispatch"]["inputs"]["layers"]
+    assert layers_input["default"] == "core", "deploy no longer defaults to the cheap path"
+    assert set(layers_input["options"]) == {"core", "full"}
+
+    # The corpus load reads Bedrock terraform outputs, so it must be gated to `full` — in
+    # core those outputs were never created and the step would fail on them.
+    corpus = next(
+        s for s in doc["jobs"]["apply"]["steps"] if "regulatory corpus" in s.get("name", "").lower()
+    )
+    assert corpus.get("if") == "inputs.layers == 'full'", (
+        "the corpus load runs in core, where the Knowledge Base it targets does not exist"
+    )
+
+
+def test_deploy_trains_once_and_reuses_the_model_by_content_fingerprint():
+    """Retraining on every deploy re-runs the DLT medallion and a training job to rebuild an
+    identical model — minutes of cluster time and real dollars. But the reuse test is by
+    CONTENT FINGERPRINT, not mere existence: skipping a retrain just because *a* model is
+    promoted would, after a feature-code change, keep serving a model trained on the old
+    features while the adapter computes the new ones — the parity break CLAUDE.md forbids. So
+    the workflow delegates the decision to `ml.training.reuse_decision`, which compares the
+    deploying code's fingerprint against the production version's tag and fails closed to
+    training (that module's own tests pin the fail-closed behaviour).
+    """
+    doc = _load("deploy")
+    retrain = _triggers(doc)["workflow_dispatch"]["inputs"]["retrain"]
+    assert retrain["default"] == "auto"
+    assert set(retrain["options"]) == {"auto", "force"}
+
+    steps = doc["jobs"]["apply"]["steps"]
+    check = next(s for s in steps if s.get("id") == "traincheck")
+    script = check["run"]
+    # The decision is delegated to the fingerprint comparator, not an existence check.
+    assert "ml.training.reuse_decision" in script, (
+        "the reuse decision no longer runs the fingerprint comparator — an existence-only "
+        "check would keep serving a stale model after a feature change"
+    )
+    assert "get-by-alias" not in script, (
+        "the workflow fell back to an existence check; reuse must be by content fingerprint"
+    )
+    # `force` short-circuits to training; the comparator's exit code drives the auto path.
+    assert "train=true" in script and "train=false" in script, "the decision has only one branch"
+    assert 'inputs.retrain }}" = "force"' in script, "force no longer forces a retrain"
+
+    # Every ML step must be gated on the one decision. Skipping only some would either
+    # retrain anyway, or half-skip — e.g. fetch data and build tables but never train.
+    ml_gated = {"5)": None, "6)": None, "7)": None}
+    for s in steps:
+        for key in ml_gated:
+            if s.get("name", "").startswith(key):
+                ml_gated[key] = s.get("if")
+    for key, cond in ml_gated.items():
+        assert cond == "steps.traincheck.outputs.train == 'true'", (
+            f"ML step {key} is not gated on the train decision (if: {cond!r}) — the skip is "
+            "partial, so it either retrains anyway or trains on stale/missing data"
+        )
 
 
 def test_gated_workflows_do_not_hardcode_secret_values():
@@ -251,7 +321,7 @@ def test_each_layer_is_planned_after_the_layer_it_depends_on():
     apply_pos = apply_script.find("apply -input=false tfplan")
     assert plan_pos != -1 and apply_pos != -1, "the apply job does not plan before applying"
     assert plan_pos < apply_pos, "the apply job applies before it plans"
-    assert "for dir in ${TF_LAYERS}" in apply_script, (
+    assert "for dir in ${layers}" in apply_script, (
         "the apply job does not iterate the layers, so plan/apply are not interleaved "
         "per layer and an upstream output cannot be read by the layer below it"
     )
