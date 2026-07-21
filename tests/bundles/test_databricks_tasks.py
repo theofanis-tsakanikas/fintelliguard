@@ -359,3 +359,40 @@ def test_the_deploy_installs_build_before_the_bundle_that_needs_it():
     assert "pip install" in bundle_step["run"] and "build" in bundle_step["run"], (
         "step 4b builds the wheel via `python -m build` but never installs `build`"
     )
+
+
+def test_the_catalog_has_a_schema_for_every_registered_model():
+    """A UC model name is `catalog.schema.model`; the schema must exist first.
+
+    The training job registers `fintelliguard.ml.fraud_scorer`, but the catalog created only
+    bronze/silver/gold — so registration failed with SCHEMA_DOES_NOT_EXIST *after* the model
+    had already been trained (deploy run 29798357533), the most wasteful place to fail. Every
+    schema a model name references must be in the catalog's schema list.
+    """
+    import re
+
+    variables = (_ROOT / "infra/databricks/variables.tf").read_text("utf-8")
+    # The `default = [...]` of the schemas variable.
+    block = variables.split('variable "schemas"', 1)[1]
+    default = block.split("default", 1)[1].split("]", 1)[0]
+    schemas = set(re.findall(r'"([a-z_]+)"', default))
+
+    # Every fintelliguard.<schema>.<model> a registered-model name uses, across the training
+    # job and the serving/bundle configs.
+    sources = [
+        _ROOT / "infra/bundles/train_fraud_scorer.py",
+        _ROOT / "infra/bundles/databricks.yml",
+        _ROOT / "infra/bundles/serving/databricks.yml",
+    ]
+    referenced = set()
+    for path in sources:
+        for schema in re.findall(r"fintelliguard\.([a-z_]+)\.", path.read_text("utf-8")):
+            referenced.add(schema)
+
+    missing = referenced - schemas
+    assert not missing, (
+        f"model/table names reference catalog schema(s) {sorted(missing)} that the catalog "
+        f"does not create (has {sorted(schemas)}) — registration fails with "
+        "SCHEMA_DOES_NOT_EXIST after training"
+    )
+    assert "ml" in schemas, "the `ml` schema is missing — registered models have no home"

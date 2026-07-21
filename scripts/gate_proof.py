@@ -680,6 +680,21 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="catalog-missing-the-model-schema",
+        rationale=(
+            "A UC model name is catalog.schema.model, and the schema must exist first. The "
+            "catalog created bronze/silver/gold but the training job registers "
+            "fintelliguard.ml.fraud_scorer — so registration failed with "
+            "SCHEMA_DOES_NOT_EXIST AFTER the model had already been trained, the most "
+            "wasteful place to fail. Dropping `ml` from the schema list restores that."
+        ),
+        path="infra/databricks/variables.tf",
+        old='default     = ["bronze", "silver", "gold", "ml"]',
+        new='default     = ["bronze", "silver", "gold"]',
+        gate="tests/bundles/test_databricks_tasks.py",
+        must_fail="test_the_catalog_has_a_schema_for_every_registered_model",
+    ),
+    Attack(
         name="dlt-pipeline-drops-the-executor-wheel",
         rationale=(
             "The gold transforms run per-card logic through Spark applyInPandas, which "

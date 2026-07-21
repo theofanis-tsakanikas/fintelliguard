@@ -82,9 +82,16 @@ variable "metastore_storage_root" {
 }
 
 variable "schemas" {
-  description = "Schemas to create in the project catalog (medallion layers per CLAUDE.md)."
+  description = <<-DESC
+    Schemas created in the project catalog. bronze/silver/gold are the medallion layers per
+    CLAUDE.md; `ml` is the home for registered models under Unity Catalog's three-level
+    namespace. The training job registers `fintelliguard.ml.fraud_scorer` and the copilot
+    model is `fintelliguard.ml.copilot_agent` — without an `ml` schema, registration fails
+    with SCHEMA_DOES_NOT_EXIST after the model has already been trained (deploy run
+    29798357533).
+  DESC
   type        = list(string)
-  default     = ["bronze", "silver", "gold"]
+  default     = ["bronze", "silver", "gold", "ml"]
 }
 
 variable "analyst_group_name" {
