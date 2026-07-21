@@ -9,6 +9,7 @@ failing on the way out.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -396,3 +397,26 @@ def test_the_catalog_has_a_schema_for_every_registered_model():
         "SCHEMA_DOES_NOT_EXIST after training"
     )
     assert "ml" in schemas, "the `ml` schema is missing — registered models have no home"
+
+
+def test_the_serving_bundle_has_no_required_variable_it_cannot_fill():
+    """A DAB variable with no `default` is REQUIRED at deploy. `agent_model_version` had none
+    while its endpoint was excluded (Stage 2), so the deploy failed with "no value assigned
+    to required variable agent_model_version" — after the fraud model had already been
+    resolved and promoted. Every no-default serving variable must be one the deploy passes.
+
+    The deploy passes exactly `fraud_model_version` (via --var). Any other no-default
+    variable would stop the bundle.
+    """
+    bundle = _yaml("infra/bundles/serving/databricks.yml")
+    no_default = {n for n, v in bundle.get("variables", {}).items() if "default" not in v}
+
+    steps = _load("deploy")["jobs"]["apply"]["steps"]
+    serving_step = next(s for s in steps if s.get("name", "").startswith("8)"))
+    passed = set(re.findall(r"--var=?\"?(\w+)=", serving_step["run"]))
+
+    unfilled = no_default - passed
+    assert not unfilled, (
+        f"serving declares required variable(s) {sorted(unfilled)} the deploy never assigns — "
+        "the bundle deploy fails after the model is already promoted"
+    )

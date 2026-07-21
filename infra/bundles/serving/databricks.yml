@@ -36,11 +36,11 @@ variables:
       (deploy) Version holding the `production` alias, resolved by the deploy from
       `databricks model-versions get-by-alias`. No default: a wrong-but-plausible "1" would
       serve whatever happened to be registered first, gate or no gate.
-  agent_model_name:
-    description: UC name of the copilot agent model.
-    default: fintelliguard.ml.copilot_agent
-  agent_model_version:
-    description: (deploy) Version of the copilot agent model.
+  # No agent_model_name / agent_model_version here. A DAB variable with no default is
+  # REQUIRED, so declaring `agent_model_version` while its endpoint (agent_serving.yml) is
+  # excluded made the deploy fail with "no value assigned to required variable
+  # agent_model_version" — after the fraud model had already been resolved and promoted. The
+  # copilot's variables return with its endpoint in Stage 2, when a model is registered for it.
 
 include:
   # EXPLICIT, not a glob. `agent_serving.yml` is deliberately NOT included: nothing in this

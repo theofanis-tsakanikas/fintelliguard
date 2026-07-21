@@ -694,6 +694,24 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_pyfunc_logs_loads_and_predicts_contract",
     ),
     Attack(
+        name="serving-requires-a-variable-the-deploy-cannot-fill",
+        rationale=(
+            "A DAB variable with no default is REQUIRED at deploy. Declaring "
+            "agent_model_version while its endpoint is excluded (Stage 2) failed the serving "
+            "bundle with 'no value assigned to required variable' — AFTER the fraud model had "
+            "already been promoted, the most wasteful place to fail. Re-adding it restores that."
+        ),
+        path="infra/bundles/serving/databricks.yml",
+        old="  fraud_model_name:\n    description: UC name of the XGBoost scorer model.",
+        new=(
+            "  agent_model_version:\n"
+            "    description: (deploy) Version of the copilot agent model.\n"
+            "  fraud_model_name:\n    description: UC name of the XGBoost scorer model."
+        ),
+        gate="tests/bundles/test_databricks_tasks.py",
+        must_fail="test_the_serving_bundle_has_no_required_variable_it_cannot_fill",
+    ),
+    Attack(
         name="catalog-missing-the-model-schema",
         rationale=(
             "A UC model name is catalog.schema.model, and the schema must exist first. The "
