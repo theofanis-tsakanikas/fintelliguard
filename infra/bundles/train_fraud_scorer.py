@@ -56,6 +56,7 @@ _add_repo_root_to_path()
 from pyspark.sql import SparkSession  # noqa: E402
 
 from ml.serving.endpoint import log_scoring_model  # noqa: E402
+from ml.serving.scorer import ScoringConfig  # noqa: E402
 from ml.training.dataset import LABEL_COLUMN, load_gold_training_features  # noqa: E402
 from ml.training.promote import evaluate_promotion  # noqa: E402
 from ml.training.registry import register_and_promote  # noqa: E402
@@ -106,7 +107,16 @@ def main() -> None:
     # The PYFUNC, not the bare estimator. `FraudScoringModel` wraps the XGBoost model with
     # the decision bands that Bedrock's action group and the copilot both depend on; serving
     # the raw estimator yields an endpoint that works and answers a different question.
-    model_uri = log_scoring_model(result.model)
+    #
+    # model_version is stamped with the MLflow run id, not left at ScoringConfig's
+    # "fraud-xgb:local" default — that placeholder leaked into a real served verdict, which
+    # then reported `model_version: fraud-xgb:local` while running the production model. The
+    # run id is the honest identifier available HERE: the UC registered version is not known
+    # until register_and_promote runs, one line below. Every score is now traceable to the
+    # exact training run that produced it, which is the point of the field.
+    model_uri = log_scoring_model(
+        result.model, config=ScoringConfig(model_version=f"run:{result.run_id}")
+    )
     registration = register_and_promote(result, config, decision, model_uri=model_uri)
 
     print(

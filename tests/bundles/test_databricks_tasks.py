@@ -420,3 +420,28 @@ def test_the_serving_bundle_has_no_required_variable_it_cannot_fill():
         f"serving declares required variable(s) {sorted(unfilled)} the deploy never assigns — "
         "the bundle deploy fails after the model is already promoted"
     )
+
+
+def test_the_training_job_stamps_a_real_model_version():
+    """ScoringConfig defaults model_version to a local placeholder ("fraud-xgb:local"). The
+    training job must override it, or a real served verdict reports that placeholder while
+    running the production model — a traceability lie (seen live, deploy run 29812012943).
+    """
+    src = (_ROOT / "infra/bundles/train_fraud_scorer.py").read_text("utf-8")
+    tree = ast.parse(src)
+    call = next(
+        (
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "log_scoring_model"
+        ),
+        None,
+    )
+    assert call is not None, "the training job no longer calls log_scoring_model"
+    kwargs = {k.arg for k in call.keywords}
+    assert "config" in kwargs, (
+        "log_scoring_model is called without a config, so the served model_version is the "
+        "'fraud-xgb:local' default — every verdict would misreport which model scored it"
+    )
+    # And the config must derive the version from the run, not hardcode another literal.
+    assert "run_id" in src, "the stamped model_version is not derived from the training run"

@@ -680,6 +680,24 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="served-model-reports-the-placeholder-version",
+        rationale=(
+            "ScoringConfig defaults model_version to 'fraud-xgb:local'. Logging the pyfunc "
+            "without overriding it makes every served verdict report that placeholder while "
+            "running the production model — a traceability lie seen live. Dropping the config "
+            "restores it."
+        ),
+        path="infra/bundles/train_fraud_scorer.py",
+        old=(
+            "    model_uri = log_scoring_model(\n"
+            '        result.model, config=ScoringConfig(model_version=f"run:{result.run_id}")\n'
+            "    )"
+        ),
+        new="    model_uri = log_scoring_model(result.model)",
+        gate="tests/bundles/test_databricks_tasks.py",
+        must_fail="test_the_training_job_stamps_a_real_model_version",
+    ),
+    Attack(
         name="model-logged-without-its-code",
         rationale=(
             "FraudScoringModel is pickled with a reference to ml.serving.endpoint and imports "
