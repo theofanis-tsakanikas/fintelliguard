@@ -143,6 +143,30 @@ resource "aws_iam_role_policy" "uc_storage_kms" {
   })
 }
 
+# Read access to the RAW landing bucket, so the DLT pipeline (which runs under Unity Catalog)
+# can Auto Load IEEE-CIS from it. The generated `databricks_aws_unity_catalog_policy` scopes
+# to the UC-managed bucket ONLY; the raw bucket lives in infra/aws and UC has no knowledge of
+# it, so the pipeline cluster fell back to AnonymousAWSCredentials and got a bare 403 on
+# `raw/ieee-cis/_delta_log` (deploy run 29791999074).
+#
+# READ-ONLY by intent: a landing zone the lakehouse consumes and never writes. The estate CMK
+# that encrypts the raw bucket is already covered by `uc_storage_kms` above (same key), so no
+# extra KMS grant is needed.
+resource "aws_iam_role_policy" "uc_storage_raw_read" {
+  name = "uc-storage-raw-read"
+  role = aws_iam_role.uc_storage.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "ReadRawLandingBucket"
+      Effect   = "Allow"
+      Action   = ["s3:GetObject", "s3:ListBucket", "s3:GetBucketLocation"]
+      Resource = [local.aws.raw_bucket_arn, "${local.aws.raw_bucket_arn}/*"]
+    }]
+  })
+}
+
 # Same reason as the workspace cross-account role: Databricks VALIDATES this role by
 # assuming it, and IAM is eventually consistent. Without the wait the credential is
 # rejected for a role that is entirely correct.
@@ -151,6 +175,7 @@ resource "time_sleep" "uc_iam_propagation" {
     aws_iam_role.uc_storage,
     aws_iam_role_policy_attachment.uc_storage,
     aws_iam_role_policy.uc_storage_kms,
+    aws_iam_role_policy.uc_storage_raw_read,
   ]
   create_duration = "60s"
 
@@ -162,6 +187,7 @@ resource "time_sleep" "uc_iam_propagation" {
   triggers = {
     s3_policy  = aws_iam_policy.uc_storage.policy
     kms_policy = aws_iam_role_policy.uc_storage_kms.policy
+    raw_policy = aws_iam_role_policy.uc_storage_raw_read.policy
     role_arn   = aws_iam_role.uc_storage.arn
   }
 }
@@ -203,4 +229,30 @@ resource "databricks_external_location" "uc" {
       aws_kms_key_arn = local.aws.kms_key_arn
     }
   }
+}
+
+# The raw landing zone as a Unity Catalog external location, so the DLT pipeline can read
+# IEEE-CIS from it under UC governance instead of falling back to anonymous S3 (the 403 on
+# deploy run 29791999074). `read_only` because the lakehouse only consumes this bucket —
+# ingestion writes to it out-of-band (the deploy's Kaggle step), never the pipeline.
+resource "databricks_external_location" "raw" {
+  provider = databricks.workspace
+  name     = "${local.name}-raw"
+  url      = "s3://${local.aws.raw_bucket_name}/raw"
+
+  credential_name = databricks_storage_credential.uc.id
+  comment         = "Read-only IEEE-CIS landing zone for the DLT pipeline."
+  read_only       = true
+  force_destroy   = true
+
+  # Same estate CMK as everything else; declared for the same reason the managed location
+  # above declares it — undeclared, UC's own read-back validation of the location fails.
+  encryption_details {
+    sse_encryption_details {
+      algorithm       = "AWS_SSE_KMS"
+      aws_kms_key_arn = local.aws.kms_key_arn
+    }
+  }
+
+  depends_on = [databricks_storage_credential.uc, time_sleep.uc_iam_propagation]
 }

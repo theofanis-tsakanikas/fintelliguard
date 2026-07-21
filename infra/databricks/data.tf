@@ -63,6 +63,11 @@ locals {
     private_subnet_ids          = try(local._aws_remote.private_subnet_ids, ["subnet-upstream-destroyed-a", "subnet-upstream-destroyed-b"])
     databricks_data_plane_sg_id = try(local._aws_remote.databricks_data_plane_sg_id, "sg-upstream-destroyed")
     kms_key_arn                 = try(local._aws_remote.kms_key_arn, "arn:aws:kms:eu-central-1:000000000000:key/upstream-destroyed")
+    # The raw landing bucket, so Unity Catalog can grant the DLT pipeline read access to it
+    # via an external location. Without one, the pipeline cluster reached the bucket with
+    # AnonymousAWSCredentials and got 403 (deploy run 29791999074).
+    raw_bucket_name = try(local._aws_remote.raw_bucket_name, "raw-bucket-upstream-destroyed")
+    raw_bucket_arn  = try(local._aws_remote.raw_bucket_arn, "arn:aws:s3:::raw-bucket-upstream-destroyed")
   }
 
   workspace_name = coalesce(var.workspace_name, local.name)
