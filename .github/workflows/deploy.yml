@@ -325,6 +325,9 @@ jobs:
         # this the pipeline's schema inference fails on a non-existent path.
         run: |
           set -euo pipefail
+          # `databricks bundle deploy` builds the wheel artifact via `python -m build`; the
+          # apply runner installs no repo deps, so `build` must be put on it first.
+          python -m pip install --quiet build
           raw_bucket="$(terraform -chdir=../../infra/aws output -raw raw_bucket_name)"
           databricks bundle deploy -t ${{ inputs.environment }} \
             --var="raw_bucket=${raw_bucket}"

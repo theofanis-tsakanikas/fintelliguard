@@ -318,3 +318,38 @@ def test_a_dlt_source_uses_absolute_imports(source: Path):
                 f"({'.' * node.level}{node.module or ''}) — DLT executes this file with no "
                 "parent package, so it raises ImportError at pipeline start"
             )
+
+
+def test_the_dlt_pipeline_installs_the_repo_wheel():
+    """The gold transforms run per-card logic through Spark applyInPandas, which serializes
+    those functions to WORKER processes. The driver-side sys.path bootstrap in the pipeline
+    files does not reach a worker, so without the package installed cluster-wide the workers
+    fail with `ModuleNotFoundError: No module named 'pipelines'` (deploy run 29793184017).
+
+    The wheel is what puts pipelines.* and ml.features.* on every worker. This pins both
+    halves: the artifact that builds it and the pipeline library that installs it.
+    """
+    bundle = _yaml("infra/bundles/databricks.yml")
+    artifacts = bundle.get("artifacts", {})
+    whl_artifacts = [a for a in artifacts.values() if a.get("type") == "whl"]
+    assert whl_artifacts, "no wheel artifact is built — DLT executors cannot import pipelines.*"
+    assert any("build" in a.get("build", "") for a in whl_artifacts), (
+        "the wheel artifact has no build command"
+    )
+
+    pipeline = _yaml("infra/bundles/resources/pipelines.yml")["resources"]["pipelines"]["medallion"]
+    libraries = pipeline["libraries"]
+    assert any("whl" in lib for lib in libraries), (
+        "the DLT pipeline installs no wheel, so applyInPandas workers cannot import the "
+        "package and the pipeline fails at feature computation"
+    )
+
+
+def test_the_deploy_installs_build_before_the_bundle_that_needs_it():
+    """`bundle deploy` runs the artifact's `python -m build`; the apply runner ships no repo
+    deps, so `build` must be installed first or the wheel never gets made."""
+    steps = _load("deploy")["jobs"]["apply"]["steps"]
+    bundle_step = next(s for s in steps if s.get("name", "").startswith("4b"))
+    assert "pip install" in bundle_step["run"] and "build" in bundle_step["run"], (
+        "step 4b builds the wheel via `python -m build` but never installs `build`"
+    )

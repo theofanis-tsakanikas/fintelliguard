@@ -12,6 +12,21 @@
 bundle:
   name: fintelliguard
 
+# Build the repo as a wheel so the DLT pipeline's executors can import `pipelines.*` and
+# `ml.features.*`. The gold transforms run per-card feature logic through Spark
+# `applyInPandas`, which serializes those functions to WORKER processes; the driver-side
+# sys.path bootstrap in the pipeline files does not reach a worker, so the workers failed
+# with `ModuleNotFoundError: No module named 'pipelines'` (deploy run 29793184017). A wheel
+# installed on the cluster puts the package on every worker's site-packages. This is the
+# "package the modules as a wheel" refinement resources/pipelines.yml predicted.
+artifacts:
+  fintelliguard_wheel:
+    type: whl
+    build: python -m build --wheel
+    # Relative to this bundle root (infra/bundles); the pyproject that defines the package
+    # lives at the repo root.
+    path: ../..
+
 variables:
   catalog:
     description: Unity Catalog for FintelliGuard (infra/databricks catalog_name output).

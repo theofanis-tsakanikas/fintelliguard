@@ -28,6 +28,10 @@ resources:
       channel: CURRENT
 
       libraries:
+        # The wheel FIRST: installed cluster-wide so both the driver and the applyInPandas
+        # worker processes can import pipelines.* and ml.features.*. Built by the
+        # `fintelliguard_wheel` artifact (see databricks.yml).
+        - whl: ../../../dist/fintelliguard-0.0.0-py3-none-any.whl
         - file:
             path: ../../../pipelines/bronze/bronze_pipeline.py
         - file:
