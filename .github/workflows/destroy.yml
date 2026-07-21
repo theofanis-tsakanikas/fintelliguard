@@ -142,6 +142,14 @@ jobs:
         working-directory: agents/bedrock/terraform
         run: |
           terraform init -input=false
+          # Flip the KB data source to RETAIN before deleting it (see knowledge_base.tf). A
+          # data source created under the old DELETE default purges the vector store on
+          # delete and gets stuck in DELETE_UNSUCCESSFUL against the private collection,
+          # blocking the whole layer. Best-effort and idempotent: once the config's RETAIN is
+          # already in state this is a no-op; the destroy below remains the authoritative
+          # teardown and exit code.
+          terraform apply -auto-approve -input=false \
+            -target=aws_bedrockagent_data_source.regulations || true
           terraform destroy -auto-approve -input=false
 
       - name: 3a) Empty the buckets infra/databricks owns

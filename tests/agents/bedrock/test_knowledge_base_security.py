@@ -145,3 +145,21 @@ def test_the_vector_collection_is_encrypted_with_the_customer_managed_key(model)
     assert policy.get("KmsARN") == "${local.aws.kms_key_arn}", (
         f"AWSOwnedKey is false but the key is {policy.get('KmsARN')!r}, not the project CMK"
     )
+
+
+def test_the_data_source_retains_vectors_on_delete(model):
+    """Deleting the KB data source must NOT purge the vector store first.
+
+    With the DELETE default, teardown made Bedrock try to delete the ingested vectors from the
+    PRIVATE OpenSearch collection one-by-one; that purge failed and left the data source in
+    DELETE_UNSUCCESSFUL, blocking the entire bedrock layer and — via the destroy's dependency
+    guard — infra/aws, so MSK kept billing (destroy run 29816166767). Terraform destroys the
+    whole collection a few resources later anyway, so there is nothing to purge; RETAIN deletes
+    the metadata and lets the wholesale teardown do the rest.
+    """
+    ds = model.get("aws_bedrockagent_data_source", "regulations")
+    assert ds is not None, "the KB data source is gone"
+    assert ds.get("data_deletion_policy") == "RETAIN", (
+        "the data source deletes vectors on teardown (DELETE), which stalls in "
+        "DELETE_UNSUCCESSFUL against the private collection and blocks the whole teardown"
+    )

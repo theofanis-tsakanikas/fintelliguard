@@ -680,6 +680,21 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="kb-data-source-purges-vectors-on-teardown",
+        rationale=(
+            "With the DELETE deletion policy, tearing down the KB data source makes Bedrock "
+            "purge the ingested vectors from the PRIVATE OpenSearch collection first — which "
+            "fails and stalls in DELETE_UNSUCCESSFUL, blocking the whole bedrock layer and, "
+            "via the destroy dependency guard, infra/aws (MSK kept billing). RETAIN is the "
+            "fix; reverting it restores the stall."
+        ),
+        path="agents/bedrock/terraform/knowledge_base.tf",
+        old='  data_deletion_policy = "RETAIN"',
+        new='  data_deletion_policy = "DELETE"',
+        gate="tests/agents/bedrock/test_knowledge_base_security.py",
+        must_fail="test_the_data_source_retains_vectors_on_delete",
+    ),
+    Attack(
         name="served-model-reports-the-placeholder-version",
         rationale=(
             "ScoringConfig defaults model_version to 'fraud-xgb:local'. Logging the pyfunc "

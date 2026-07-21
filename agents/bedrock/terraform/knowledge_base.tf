@@ -341,6 +341,19 @@ resource "aws_bedrockagent_data_source" "regulations" {
   knowledge_base_id = aws_bedrockagent_knowledge_base.this.id
   name              = "regulatory-corpus"
 
+  # RETAIN, not the DELETE default. On teardown, deleting the data source with DELETE makes
+  # Bedrock try to PURGE the ingested vectors from the OpenSearch collection first — and that
+  # purge failed against the private collection, leaving the data source in DELETE_UNSUCCESSFUL
+  # and blocking the whole bedrock layer (destroy run 29816166767):
+  #
+  #     unexpected state 'DELETE_UNSUCCESSFUL' ... Unable to delete data from vector store ...
+  #     consider updating the dataDeletionPolicy of the data source to RETAIN
+  #
+  # There is nothing to purge one-by-one: Terraform destroys the entire OpenSearch collection
+  # a few resources later, taking every vector with it. RETAIN deletes the data-source metadata
+  # and leaves the wholesale collection teardown to do the rest.
+  data_deletion_policy = "RETAIN"
+
   data_source_configuration {
     type = "S3"
     s3_configuration {
