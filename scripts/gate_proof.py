@@ -680,6 +680,20 @@ ATTACKS: tuple[Attack, ...] = (
         must_fail="test_a_task_script_never_calls_sys_exit",
     ),
     Attack(
+        name="model-logged-without-a-signature",
+        rationale=(
+            "Unity Catalog refuses to register a model with no signature, AFTER it has been "
+            "trained — the most wasteful place to fail. log_scoring_model must attach one "
+            "with both input and output specs. Dropping the signature arg restores the "
+            "MlflowException."
+        ),
+        path="ml/serving/endpoint.py",
+        old="            signature=signature,\n            input_example=example_input,\n",
+        new="",
+        gate="tests/serving/test_endpoint.py",
+        must_fail="test_pyfunc_logs_loads_and_predicts_contract",
+    ),
+    Attack(
         name="catalog-missing-the-model-schema",
         rationale=(
             "A UC model name is catalog.schema.model, and the schema must exist first. The "

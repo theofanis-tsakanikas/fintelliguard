@@ -18,6 +18,18 @@ def test_pyfunc_logs_loads_and_predicts_contract(trained_xgb, tmp_path):
     model_uri = log_scoring_model(trained_xgb, config=ScoringConfig(model_version="fraud-xgb:7"))
     loaded = mlflow.pyfunc.load_model(model_uri)
 
+    # Unity Catalog registration REQUIRES a signature with BOTH input and output specs, or it
+    # refuses the model after it has already been trained (deploy run 29799949900). The input
+    # must carry the canonical mixed dtypes — all-double would reject the bool features that
+    # serving sends.
+    signature = loaded.metadata.signature
+    assert signature is not None and signature.inputs is not None, "no input signature — UC rejects"
+    assert signature.outputs is not None, "no output signature — UC rejects"
+    input_types = {c.name: c.type.name for c in signature.inputs.inputs}
+    assert input_types["country_mismatch"] == "boolean", (
+        "a bool feature is typed non-bool in the signature — serving input would be rejected"
+    )
+
     other = {**SAMPLE_FEATURES, "country_mismatch": False, "amount_zscore": -0.5}
     predictions = loaded.predict(pd.DataFrame([SAMPLE_FEATURES, other]))
 
