@@ -8,10 +8,17 @@ transactions DataFrame is injected (a silver/gold table in prod, a sample table 
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
+# pyspark is imported LAZILY (inside the methods), not at module load. The copilot's serving
+# artifact and its registration import this package for the OTHER tools (get_fraud_score,
+# search_similar_cases), and neither the model-serving container nor the deploy runner ships
+# pyspark — a top-level `from pyspark.sql import ...` made merely importing the tools package
+# fail with ModuleNotFoundError (copilot registration, deploy run 29892959804). LakehouseTools
+# only runs on a Spark cluster (Genie/query_lakehouse), which has pyspark; loading it there,
+# when a method is actually called, is correct and keeps the import graph pyspark-free.
+if TYPE_CHECKING:
+    from pyspark.sql import DataFrame
 
 
 class LakehouseTools:
@@ -26,6 +33,8 @@ class LakehouseTools:
 
     def merchant_fraud_history(self, merchant_id: str) -> dict[str, Any]:
         """Historical transaction/fraud counts and fraud rate for a merchant."""
+        from pyspark.sql import functions as F
+
         rows = self._txns.filter(F.col("merchant_id") == merchant_id)
         total = rows.count()
         fraud = rows.filter(F.col("is_fraud") == 1).count()
@@ -38,6 +47,8 @@ class LakehouseTools:
 
     def card_transaction_summary(self, card_hash: str) -> dict[str, Any]:
         """Counts, distinct merchants/devices/countries and total amount for a card."""
+        from pyspark.sql import functions as F
+
         rows = self._txns.filter(F.col("card_hash") == card_hash)
         agg = rows.agg(
             F.count(F.lit(1)).alias("transaction_count"),
@@ -57,6 +68,8 @@ class LakehouseTools:
 
     def device_usage(self, device_id: str) -> dict[str, Any]:
         """How many transactions and distinct cards a device has been used by."""
+        from pyspark.sql import functions as F
+
         rows = self._txns.filter(F.col("device_id") == device_id)
         agg = rows.agg(
             F.count(F.lit(1)).alias("transaction_count"),
