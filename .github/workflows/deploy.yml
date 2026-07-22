@@ -277,9 +277,13 @@ jobs:
             echo "train=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # mlflow-skinny is the registry client without the server deps; databricks-sdk carries
-          # the OAuth M2M auth it uses to reach Unity Catalog. Both are quick to install.
-          python -m pip install --quiet mlflow-skinny databricks-sdk
+          # FULL mlflow, deliberately. `MlflowClient.get_model_version_by_alias(...).tags` is how
+          # the reuse check reads the content fingerprint off the promoted model — and the
+          # slimmed "skinny" mlflow build returns the version with EMPTY tags, so the check saw
+          # no fingerprint, failed closed, and RETRAINED on every deploy (run 29888162885
+          # retrained a model whose fingerprint already matched — real cluster cost for nothing).
+          # Full mlflow returns the tags; databricks-sdk carries the OAuth M2M auth for UC.
+          python -m pip install --quiet "mlflow==2.16.2" databricks-sdk
           # Exit 0 => a model with this code's fingerprint already holds production (skip);
           # non-zero => train. `if` consumes the exit code without tripping `set -e`.
           if python -m ml.training.reuse_decision fintelliguard.ml.fraud_scorer production; then
@@ -544,3 +548,54 @@ jobs:
           terraform -chdir=agents/bedrock/terraform show -no-color tfplan
           terraform -chdir=agents/bedrock/terraform apply -input=false tfplan
           rm -f agents/bedrock/terraform/tfplan
+
+      # 10) Tier 3 — register the analyst copilot and serve it. BEST-EFFORT (continue-on-error):
+      # the Agent-Framework serving path is newer and must never block or roll back the proven
+      # fraud endpoint, so a failure here is logged and the deploy still succeeds. Runs for core
+      # and full alike — the copilot is Databricks-side, independent of the Bedrock layer. The
+      # fraud endpoint exists by now (step 8), so its name resolves; the LLM + vector index are
+      # already present. Demo transactions come from the repo (parity-tested against the Tier-2
+      # store), so no AWS creds are needed here.
+      - name: 10) Register and serve the Tier-3 copilot (best-effort)
+        continue-on-error: true
+        env:
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          set -uo pipefail
+          python -m pip install --quiet "mlflow==2.16.2" pandas databricks-sdk
+          fraud_ep="$(databricks serving-endpoints list -o json \
+            | jq -r '.[].name | select(endswith("fintelliguard-fraud-score"))' | head -1)"
+          if [ -z "${fraud_ep}" ]; then
+            echo "fraud endpoint not found; skipping copilot registration (best-effort)"
+            exit 0
+          fi
+          echo "copilot get_fraud_score -> ${fraud_ep}"
+          PYTHONPATH=. python infra/bundles/register_copilot.py \
+            --model-name fintelliguard.ml.copilot_agent \
+            --fraud-endpoint "${fraud_ep}" \
+            --llm-endpoint databricks-claude-haiku-4-5 \
+            --vector-endpoint fintelliguard-cases \
+            --vector-index fintelliguard.gold.case_embeddings_index \
+            --features-file agents/databricks/demo_transactions.json \
+            || { echo "copilot registration failed (best-effort)"; exit 0; }
+          agver="$(databricks model-versions get-by-alias \
+            fintelliguard.ml.copilot_agent production -o json | jq -er '.version')" \
+            || { echo "no copilot production alias (best-effort)"; exit 0; }
+          echo "serving copilot version ${agver}"
+          ( cd infra/bundles/copilot \
+            && databricks bundle deploy -t ${{ inputs.environment }} \
+                 --var="agent_model_version=${agver}" ) \
+            || echo "copilot serving deploy failed (best-effort)"
+
+      # 11) Smoke-test the Tier-2 agent end to end (grounded verdict). BEST-EFFORT: foundation-
+      # model access is account/region config, not our code, so an inconclusive invocation must
+      # not fail the deploy — the cross-cloud contract is gated by the Lambda tests + a live
+      # Lambda invocation. Only `full` deploys the Bedrock agent.
+      - name: 11) Smoke-test the Tier-2 agent (best-effort)
+        if: inputs.layers == 'full'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          python -m pip install --quiet boto3
+          python agents/bedrock/smoke_agent.py --region "${AWS_REGION}"

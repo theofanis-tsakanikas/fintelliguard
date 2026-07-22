@@ -36,18 +36,13 @@ variables:
       (deploy) Version holding the `production` alias, resolved by the deploy from
       `databricks model-versions get-by-alias`. No default: a wrong-but-plausible "1" would
       serve whatever happened to be registered first, gate or no gate.
-  # No agent_model_name / agent_model_version here. A DAB variable with no default is
-  # REQUIRED, so declaring `agent_model_version` while its endpoint (agent_serving.yml) is
-  # excluded made the deploy fail with "no value assigned to required variable
-  # agent_model_version" — after the fraud model had already been resolved and promoted. The
-  # copilot's variables return with its endpoint in Stage 2, when a model is registered for it.
+  # The copilot (Tier 3) serving lives in its OWN bundle (`infra/bundles/copilot`), deliberately
+  # decoupled: the copilot's Agent-Framework serving is a newer, riskier path, and coupling it
+  # into this bundle would mean a copilot failure blocks the proven fraud-score endpoint. Kept
+  # apart so Tier 1 serving is never held hostage to Tier 3.
 
 include:
-  # EXPLICIT, not a glob. `agent_serving.yml` is deliberately NOT included: nothing in this
-  # repository logs or registers `fintelliguard.ml.copilot_agent` yet, so including it would
-  # guarantee the same "Registered model does not exist" failure this bundle exists to end —
-  # just for the other model. It is wired in when the agent is made loggable; the file stays
-  # so the endpoint's shape is reviewable rather than lost.
+  # EXPLICIT, not a glob. This bundle serves the fraud scorer only.
   - ./model_serving.yml
 
 targets:

@@ -1,0 +1,36 @@
+{
+  "txn_demo_fraud_001": {
+    "card_hash": "card_demo_hi_risk",
+    "amount_usd": 250.0,
+    "amount_log": 5.525453,
+    "amount_zscore": 3.5,
+    "txn_velocity_1h": 9,
+    "txn_velocity_24h": 12,
+    "amount_sum_1h": 2200.0,
+    "distinct_merchants_24h": 4,
+    "card_age_days": 30,
+    "device_seen_before": false,
+    "device_txn_count_24h": 5,
+    "country_mismatch": true,
+    "distinct_countries_24h": 2,
+    "mcc_risk_tier": 5,
+    "is_unusual_hour": true
+  },
+  "txn_demo_legit_001": {
+    "card_hash": "card_demo_normal",
+    "amount_usd": 19.99,
+    "amount_log": 3.044522,
+    "amount_zscore": 0.1,
+    "txn_velocity_1h": 1,
+    "txn_velocity_24h": 3,
+    "amount_sum_1h": 55.0,
+    "distinct_merchants_24h": 2,
+    "card_age_days": 800,
+    "device_seen_before": true,
+    "device_txn_count_24h": 40,
+    "country_mismatch": false,
+    "distinct_countries_24h": 1,
+    "mcc_risk_tier": 1,
+    "is_unusual_hour": false
+  }
+}

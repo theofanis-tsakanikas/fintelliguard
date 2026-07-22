@@ -1,0 +1,24 @@
+# Copilot agent serving endpoint — the Tier-3 analyst copilot (agents/databricks) served as a
+# model serving endpoint. Registered by `infra/bundles/register_copilot.py`; the version is
+# resolved from the `production` alias by the deploy, same as the fraud scorer.
+#
+# No `permissions` block: the analyst UC group (`fintelliguard-analysts`) is not provisioned by
+# this project's IaC, and a CAN_QUERY grant to a group that does not exist fails the deploy. The
+# owning service principal retains manage/query; a group grant is added when the group is
+# created. Scale-to-zero, so an idle copilot costs nothing.
+
+resources:
+  model_serving_endpoints:
+    copilot_agent:
+      name: fintelliguard-copilot
+      config:
+        served_entities:
+          - name: copilot
+            entity_name: ${var.agent_model_name}
+            entity_version: ${var.agent_model_version}
+            workload_size: Small
+            scale_to_zero_enabled: true
+        traffic_config:
+          routes:
+            - served_model_name: copilot
+              traffic_percentage: 100

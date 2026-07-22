@@ -209,6 +209,15 @@ def test_deploy_trains_once_and_reuses_the_model_by_content_fingerprint():
     assert "train=true" in script and "train=false" in script, "the decision has only one branch"
     assert 'inputs.retrain }}" = "force"' in script, "force no longer forces a retrain"
 
+    # FULL mlflow, not mlflow-skinny: skinny returns the promoted version with EMPTY tags, so
+    # the fingerprint read finds nothing, fails closed, and retrains EVERY deploy — the exact
+    # cost the reuse check exists to avoid (a retrain is the estate's basic per-deploy cost).
+    assert "mlflow-skinny" not in script, (
+        "the reuse check installs mlflow-skinny, which returns empty model-version tags — the "
+        "fingerprint is never read, so it retrains on every deploy and the skip never happens"
+    )
+    assert re.search(r"install[^\n]*\bmlflow\b", script), "the reuse check must install mlflow"
+
     # Every ML step must be gated on the one decision. Skipping only some would either
     # retrain anyway, or half-skip — e.g. fetch data and build tables but never train.
     ml_gated = {"5)": None, "6)": None, "7)": None}

@@ -1,0 +1,27 @@
+# Copilot serving bundle — Tier 3, deliberately SEPARATE from the fraud-score serving bundle.
+#
+# The copilot is a Mosaic AI Agent-Framework pyfunc (registered by
+# `infra/bundles/register_copilot.py`); its serving path is newer and riskier than the XGBoost
+# endpoint. Kept in its own bundle so a copilot serving failure can never block or roll back the
+# proven Tier-1 fraud-score endpoint — the deploy deploys this best-effort, after the core.
+#
+# `agent_model_version` has no default: the deploy resolves it from the copilot's `production`
+# alias, so an unregistered or rejected copilot is never served (same rule as the fraud model).
+
+bundle:
+  name: fintelliguard-copilot
+
+variables:
+  agent_model_name:
+    description: UC name of the served copilot agent.
+    default: fintelliguard.ml.copilot_agent
+  agent_model_version:
+    description: (deploy) Version of the copilot holding the `production` alias.
+
+include:
+  - ./agent_serving.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
