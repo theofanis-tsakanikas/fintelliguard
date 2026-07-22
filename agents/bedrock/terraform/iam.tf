@@ -20,8 +20,13 @@ resource "aws_iam_role" "agent" {
 
 data "aws_iam_policy_document" "agent" {
   statement {
-    sid     = "InvokeFoundationModel"
-    actions = ["bedrock:InvokeModel"]
+    sid = "InvokeFoundationModel"
+    # BOTH the buffered and the STREAMING action: the Bedrock agent invokes its model with
+    # response streaming, so InvokeModel alone is not enough — without
+    # InvokeModelWithResponseStream the agent's execution is denied and InvokeAgent returns an
+    # opaque accessDenied even though the CALLER is authorized (deploy run 29897999539; the
+    # caller's InvokeAgent simulates as allowed, so the denial is the agent's own model call).
+    actions = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
     # The inference profile AND the base model in every region it can route to — invoking
     # through a cross-region profile is denied without InvokeModel on both.
     resources = local.foundation_model_invoke_arns

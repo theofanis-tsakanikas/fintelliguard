@@ -18,32 +18,39 @@ variable "environment" {
 
 variable "foundation_model" {
   description = <<-DESC
-    The model the agent INVOKES — an INFERENCE PROFILE id for Claude Haiku 4.5, not the bare
-    model id. Haiku 4.5 has no on-demand throughput on the bare id; invoking it fails with
+    The model the agent INVOKES — an INFERENCE PROFILE id (the `eu.` cross-region system
+    profile), never a bare model id: newer models have no on-demand throughput on the bare id
+    ("Invocation ... with on-demand throughput isn't supported. Retry ... with an inference
+    profile"), which the agent surfaces as an opaque accessDenied.
 
-        ValidationException: Invocation of model ID anthropic.claude-haiku-4-5-...-v1:0 with
-        on-demand throughput isn't supported. Retry ... with an inference profile.
+    Amazon Nova Lite, not Claude Haiku 4.5, is the default — for a diagnosed reason. A Bedrock
+    agent invokes its model with RESPONSE STREAMING, and streaming Anthropic models in this
+    account fails with
 
-    which the AGENT surfaces as an opaque accessDenied at InvokeAgent time — the model resolves
-    at apply (get-foundation-model succeeds) and the deploy goes green, then every verdict is
-    denied (deploy run 29894311393). The `eu.` cross-region system profile is the invocation
-    target; verify with `aws bedrock list-inference-profiles`. `foundation_model_base_id` below
-    is the underlying model the profile routes to (needed for the IAM grant).
+        ResourceNotFoundException: Model use case details have not been submitted for this
+        account.
 
-    Switch to a Sonnet inference profile for final evaluation.
+    i.e. Anthropic model access on Bedrock is gated behind a one-time use-case submission in
+    the console (a MANUAL step, not IaC). Amazon's first-party Nova has no such gate and streams
+    out of the box (verified live with invoke_model_with_response_stream). To run the agent on
+    Claude Haiku instead, submit the Anthropic use-case in the Bedrock console and set this to
+    `eu.anthropic.claude-haiku-4-5-20251001-v1:0` (+ the base id below). Nova is also cheaper.
+
+    Verify a profile exists with `aws bedrock list-inference-profiles`.
   DESC
   type        = string
-  default     = "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+  default     = "eu.amazon.nova-lite-v1:0"
 }
 
 variable "foundation_model_base_id" {
   description = <<-DESC
     The bare foundation model the inference profile routes to. Invoking via an inference
-    profile requires bedrock:InvokeModel on BOTH the profile ARN and the foundation-model ARNs
-    in the regions it can route to, so this is granted alongside the profile in iam.tf.
+    profile requires bedrock:InvokeModel(WithResponseStream) on BOTH the profile ARN and the
+    foundation-model ARNs in the regions it can route to, so this is granted alongside the
+    profile in iam.tf.
   DESC
   type        = string
-  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
+  default     = "amazon.nova-lite-v1:0"
 }
 
 variable "inference_profile_regions" {
