@@ -37,6 +37,29 @@ data "aws_iam_policy_document" "agent" {
     actions   = ["bedrock:Retrieve"]
     resources = [aws_bedrockagent_knowledge_base.this.arn]
   }
+
+  # The agent APPLIES the attached guardrail (on input and output). Without ApplyGuardrail on
+  # the guardrail ARN the agent's execution is denied at the very first step — the guardrail is
+  # applied to the input before the model is ever called — and InvokeAgent returns an opaque
+  # accessDenied while the caller is authorized (deploy run 29900921801; simulate confirmed the
+  # role's ApplyGuardrail was implicitDeny). The guardrail binding is worthless without this.
+  statement {
+    sid       = "ApplyGuardrail"
+    actions   = ["bedrock:ApplyGuardrail"]
+    resources = [aws_bedrock_guardrail.this.guardrail_arn]
+  }
+
+  # The agent encrypts its session state with the estate CMK (customer_encryption_key_arn on
+  # aws_bedrockagent_agent). Scoped to that one key.
+  statement {
+    sid = "SessionEncryptionWithCMK"
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey",
+      "kms:DescribeKey",
+    ]
+    resources = [local.aws.kms_key_arn]
+  }
 }
 
 resource "aws_iam_role_policy" "agent" {
