@@ -18,20 +18,38 @@ variable "environment" {
 
 variable "foundation_model" {
   description = <<-DESC
-    Bedrock foundation model id for the agent. Dev uses Claude Haiku 4.5; switch to
-    anthropic.claude-sonnet-4-6 for final evaluation.
+    The model the agent INVOKES — an INFERENCE PROFILE id for Claude Haiku 4.5, not the bare
+    model id. Haiku 4.5 has no on-demand throughput on the bare id; invoking it fails with
 
-    Must be an id Bedrock actually serves in `aws_region` — verify with:
-        aws bedrock get-foundation-model --region <r> --model-identifier <id>
+        ValidationException: Invocation of model ID anthropic.claude-haiku-4-5-...-v1:0 with
+        on-demand throughput isn't supported. Retry ... with an inference profile.
 
-    This was `anthropic.claude-haiku-4-5`, which does not resolve: Bedrock serves Haiku 4.5
-    only under its dated, versioned id. Some newer models (opus-4-8, sonnet-5, sonnet-4-6)
-    DO take a bare id, which is exactly what makes the inconsistency easy to miss — the
-    shorter form looks right, and the failure surfaces at apply, after every other layer has
-    already been created.
+    which the AGENT surfaces as an opaque accessDenied at InvokeAgent time — the model resolves
+    at apply (get-foundation-model succeeds) and the deploy goes green, then every verdict is
+    denied (deploy run 29894311393). The `eu.` cross-region system profile is the invocation
+    target; verify with `aws bedrock list-inference-profiles`. `foundation_model_base_id` below
+    is the underlying model the profile routes to (needed for the IAM grant).
+
+    Switch to a Sonnet inference profile for final evaluation.
+  DESC
+  type        = string
+  default     = "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "foundation_model_base_id" {
+  description = <<-DESC
+    The bare foundation model the inference profile routes to. Invoking via an inference
+    profile requires bedrock:InvokeModel on BOTH the profile ARN and the foundation-model ARNs
+    in the regions it can route to, so this is granted alongside the profile in iam.tf.
   DESC
   type        = string
   default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "inference_profile_regions" {
+  description = "Regions the EU cross-region inference profile can route to (for the FM ARN grants)."
+  type        = list(string)
+  default     = ["eu-central-1", "eu-west-1", "eu-west-3", "eu-north-1"]
 }
 
 variable "embedding_model" {

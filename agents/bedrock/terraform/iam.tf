@@ -20,9 +20,11 @@ resource "aws_iam_role" "agent" {
 
 data "aws_iam_policy_document" "agent" {
   statement {
-    sid       = "InvokeFoundationModel"
-    actions   = ["bedrock:InvokeModel"]
-    resources = [local.foundation_model_arn]
+    sid     = "InvokeFoundationModel"
+    actions = ["bedrock:InvokeModel"]
+    # The inference profile AND the base model in every region it can route to — invoking
+    # through a cross-region profile is denied without InvokeModel on both.
+    resources = local.foundation_model_invoke_arns
   }
 
   statement {

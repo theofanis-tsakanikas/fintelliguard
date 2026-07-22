@@ -34,6 +34,15 @@ locals {
   collection_name      = "${var.project}-reg"
   databricks_secret_id = local.aws.secret_arns[var.databricks_secret_key]
 
-  foundation_model_arn = "arn:${local.partition}:bedrock:${local.region}::foundation-model/${var.foundation_model}"
-  embedding_model_arn  = "arn:${local.partition}:bedrock:${local.region}::foundation-model/${var.embedding_model}"
+  # The agent invokes an INFERENCE PROFILE (Haiku 4.5 has no on-demand throughput on the bare
+  # model id). The profile ARN is account-scoped; invoking through it also requires
+  # bedrock:InvokeModel on the base model in every region the cross-region profile can route to.
+  foundation_model_arn = "arn:${local.partition}:bedrock:${local.region}:${local.account_id}:inference-profile/${var.foundation_model}"
+  foundation_model_invoke_arns = concat(
+    [local.foundation_model_arn],
+    [for r in var.inference_profile_regions :
+      "arn:${local.partition}:bedrock:${r}::foundation-model/${var.foundation_model_base_id}"
+    ]
+  )
+  embedding_model_arn = "arn:${local.partition}:bedrock:${local.region}::foundation-model/${var.embedding_model}"
 }
