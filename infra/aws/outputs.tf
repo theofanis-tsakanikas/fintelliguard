@@ -63,6 +63,11 @@ output "raw_bucket_arn" {
   value       = aws_s3_bucket.raw.arn
 }
 
+output "online_feature_key" {
+  description = "S3 key of the online-feature object the Tier-2 Lambda resolves ids against."
+  value       = aws_s3_object.online_features.key
+}
+
 # ---- Secrets / IAM -----------------------------------------------------------
 output "secret_arns" {
   description = "Map of managed secret name -> ARN (placeholders; values injected at runtime)."

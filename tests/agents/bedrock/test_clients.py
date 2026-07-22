@@ -9,9 +9,11 @@ import pytest
 from clients import (
     _CONTRACT_KEYS,
     MosaicModelServingClient,
+    S3OnlineFeatureStore,
+    get_databricks_oauth_token,
     get_databricks_token,
 )
-from errors import FraudScoreError
+from errors import FeatureStoreError, FraudScoreError
 
 _FULL_CONTRACT = {
     "fraud_score": 0.9,
@@ -24,12 +26,144 @@ _FULL_CONTRACT = {
 
 @pytest.fixture(autouse=True)
 def _clear_caches():
-    """The token cache and boto3 client are module-level; reset them between tests."""
+    """The token/feature caches and boto3 clients are module-level; reset them between tests."""
     clients._TOKEN_CACHE.clear()
+    clients._FEATURES_CACHE.clear()
+    clients._OAUTH_CACHE.clear()
     clients._SECRETS_CLIENT = None
+    clients._S3_CLIENT = None
     yield
     clients._TOKEN_CACHE.clear()
+    clients._FEATURES_CACHE.clear()
+    clients._OAUTH_CACHE.clear()
     clients._SECRETS_CLIENT = None
+    clients._S3_CLIENT = None
+
+
+class _OAuthSecrets:
+    """Secrets client returning the SP credential JSON the OAuth exchange reads."""
+
+    def __init__(self, token_endpoint="https://dbc-x.cloud.databricks.com/oidc/v1/token"):
+        self.creds = {
+            "client_id": "cid",
+            "client_secret": "csecret",
+            "token_endpoint": token_endpoint,
+        }
+
+    def get_secret_value(self, SecretId):  # noqa: N803 - boto3's parameter name
+        return {"SecretString": json.dumps(self.creds)}
+
+
+def test_oauth_token_is_exchanged_from_client_credentials_and_cached():
+    sm = _OAuthSecrets()
+    calls = {"n": 0}
+
+    def fake_post(url, payload, headers, timeout):
+        calls["n"] += 1
+        # Basic auth of client_id:client_secret, and the client-credentials grant body.
+        assert headers["Authorization"].startswith("Basic ")
+        assert b"grant_type=client_credentials" in payload
+        return json.dumps({"access_token": "wtok-123", "expires_in": 3600})
+
+    a = get_databricks_oauth_token("s", client=sm, now=0.0, http_post=fake_post)
+    b = get_databricks_oauth_token("s", client=sm, now=10.0, http_post=fake_post)
+    assert a == b == "wtok-123"
+    assert calls["n"] == 1, "the token was re-exchanged inside its lifetime"
+
+
+def test_oauth_token_is_refreshed_after_it_expires():
+    sm = _OAuthSecrets()
+    seq = iter(["first", "second"])
+
+    def fake_post(url, payload, headers, timeout):
+        return json.dumps({"access_token": next(seq), "expires_in": 100})
+
+    first = get_databricks_oauth_token("s", client=sm, now=0.0, http_post=fake_post)
+    later = get_databricks_oauth_token("s", client=sm, now=200.0, http_post=fake_post)
+    assert first == "first" and later == "second", "an expired OAuth token was not refreshed"
+
+
+def test_oauth_failure_is_opaque_and_never_leaks_the_token_endpoint():
+    endpoint = "https://dbc-secret.cloud.databricks.com/oidc/v1/token"
+    sm = _OAuthSecrets(token_endpoint=endpoint)
+
+    def boom(*_a):
+        raise ConnectionError(f"refused to {endpoint}")
+
+    with pytest.raises(FraudScoreError) as excinfo:
+        get_databricks_oauth_token("s", client=sm, now=0.0, http_post=boom)
+    assert endpoint not in str(excinfo.value)
+    assert "databricks" not in str(excinfo.value).lower()
+
+
+def test_oauth_misconfigured_credentials_are_refused():
+    class _BadSecrets:
+        def get_secret_value(self, SecretId):  # noqa: N803
+            return {"SecretString": "not-json"}
+
+    with pytest.raises(FraudScoreError, match="misconfigured"):
+        get_databricks_oauth_token("s", client=_BadSecrets(), now=0.0)
+
+
+_FEATURES = {
+    "amount_usd": 250.0,
+    "txn_velocity_1h": 9,
+    "country_mismatch": True,
+    "is_unusual_hour": True,
+}
+
+
+class _FakeS3:
+    """Minimal S3 client: get_object returns the configured body and counts calls."""
+
+    def __init__(self, table):
+        self.body = json.dumps(table).encode("utf-8")
+        self.calls = 0
+
+    def get_object(self, Bucket, Key):  # noqa: N803 - boto3's parameter names
+        self.calls += 1
+        return {"Body": _Body(self.body)}
+
+
+class _Body:
+    def __init__(self, data):
+        self._data = data
+
+    def read(self):
+        return self._data
+
+
+def test_s3_feature_store_resolves_an_id_to_its_feature_vector():
+    table = {"txn-1": {"card_hash": "card-a", **_FEATURES}}
+    s3 = _FakeS3(table)
+    store = S3OnlineFeatureStore("b", "k", s3_client=s3, now=lambda: 0.0)
+
+    features = store.fetch(card_hash="card-a", transaction_id="txn-1")
+
+    assert features == _FEATURES, "card_hash must be stripped and the 15 features returned"
+
+
+def test_s3_feature_store_caches_the_table_across_warm_invocations():
+    s3 = _FakeS3({"txn-1": {**_FEATURES}})
+    store = S3OnlineFeatureStore("b", "k", s3_client=s3, now=lambda: 0.0)
+    store.fetch(card_hash="x", transaction_id="txn-1")
+    store.fetch(card_hash="x", transaction_id="txn-1")
+    assert s3.calls == 1, "the feature object was re-downloaded inside the TTL"
+
+
+def test_s3_feature_store_refuses_an_unknown_transaction():
+    """Never fabricate a score for an id the store has never seen."""
+    store = S3OnlineFeatureStore("b", "k", s3_client=_FakeS3({}), now=lambda: 0.0)
+    with pytest.raises(FeatureStoreError, match="no online features"):
+        store.fetch(card_hash="x", transaction_id="ghost")
+
+
+def test_s3_feature_store_refuses_a_mismatched_card_hash():
+    """A wrong id pairing must not silently return another transaction's features."""
+    table = {"txn-1": {"card_hash": "card-a", **_FEATURES}}
+    store = S3OnlineFeatureStore("b", "k", s3_client=_FakeS3(table), now=lambda: 0.0)
+    with pytest.raises(FeatureStoreError, match="card_hash does not match"):
+        store.fetch(card_hash="WRONG", transaction_id="txn-1")
 
 
 class _FakeSecrets:

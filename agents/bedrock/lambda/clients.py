@@ -7,9 +7,11 @@ hardcoded. Stdlib only (boto3 is provided by the Lambda runtime, imported lazily
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import time
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -80,6 +82,64 @@ def get_databricks_token(
     resolved = client or _secrets_client()
     token = resolved.get_secret_value(SecretId=secret_id)["SecretString"]
     _TOKEN_CACHE[secret_id] = (token, stamp)
+    return token
+
+
+# OAuth M2M tokens, cached by secret id until shortly before they expire. The action group
+# authenticates to the serving endpoint as the deploy's SERVICE PRINCIPAL via the OAuth
+# client-credentials grant — no long-lived PAT to mint, store, or rotate, and no token-creation
+# entitlement to grant. The secret holds {client_id, client_secret, token_endpoint}.
+_OAUTH_CACHE: dict[str, tuple[str, float]] = {}
+_OAUTH_REFRESH_SKEW_SECONDS = 30.0
+
+
+def get_databricks_oauth_token(
+    secret_id: str,
+    *,
+    client: Any | None = None,
+    now: float | None = None,
+    http_post: Callable[[str, bytes, dict[str, str], float], str] | None = None,
+) -> str:
+    """A workspace OAuth token for the SP, exchanged from client credentials and cached.
+
+    The credentials live in Secrets Manager as JSON; `client`/`now`/`http_post` are injectable
+    so the exchange is unit-testable without AWS or a live token endpoint.
+    """
+    stamp = now if now is not None else time.monotonic()
+    cached = _OAUTH_CACHE.get(secret_id)
+    if cached is not None and stamp < cached[1]:
+        return cached[0]
+
+    resolved = client or _secrets_client()
+    blob = resolved.get_secret_value(SecretId=secret_id)["SecretString"]
+    try:
+        creds = json.loads(blob)
+        client_id = creds["client_id"]
+        client_secret = creds["client_secret"]
+        token_endpoint = creds["token_endpoint"]
+    except (json.JSONDecodeError, TypeError, KeyError) as exc:
+        raise FraudScoreError("the scoring-service credentials are misconfigured") from exc
+
+    auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {auth}",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    grant = {"grant_type": "client_credentials", "scope": "all-apis"}
+    body = urllib.parse.urlencode(grant).encode()
+    poster = http_post or _urllib_post
+    try:
+        raw = poster(token_endpoint, body, headers, 5.0)
+        data = json.loads(raw)
+        token = data["access_token"]
+        ttl = float(data.get("expires_in", 3600))
+    except Exception as exc:  # noqa: BLE001 - any failure here is an opaque auth failure
+        # Never echo the exception: a urllib error stringifies to include the token endpoint,
+        # which is the workspace host Bedrock must never learn.
+        _LOGGER.error("OAuth token exchange failed: %s", exc)
+        raise FraudScoreError("could not authenticate to the scoring service") from exc
+
+    _OAUTH_CACHE[secret_id] = (token, stamp + max(ttl - _OAUTH_REFRESH_SKEW_SECONDS, 0.0))
     return token
 
 
@@ -177,10 +237,8 @@ def _extract_contract(data: Any) -> dict[str, Any]:
 
 
 class OnlineFeatureStore:
-    """Default online Feature Store lookup — deployed on Databricks (deferred).
-
-    A `lookup` callable can be injected for local use/tests; without one, lookups raise
-    (the online store lives in the Databricks deploy phase).
+    """Injected-lookup Feature Store: a `lookup` callable resolves (card_hash, transaction_id)
+    to the 15 features. Used with a stub in tests; `S3OnlineFeatureStore` is the deployed one.
     """
 
     def __init__(self, lookup: Callable[[str, str], dict[str, Any]] | None = None) -> None:
@@ -192,3 +250,83 @@ class OnlineFeatureStore:
                 "online Feature Store lookup is deferred to the Databricks deploy"
             )
         return self._lookup(card_hash, transaction_id)
+
+
+# The online feature table, cached at MODULE scope across warm invocations — same reasoning as
+# the token cache: without it every Tier-2 call re-downloads the object from S3.
+_FEATURES_CACHE: dict[str, tuple[dict[str, dict[str, Any]], float]] = {}
+_FEATURES_TTL_SECONDS = 300.0
+_S3_CLIENT: Any | None = None
+
+
+def _s3_client() -> Any:
+    """One boto3 S3 client for the module's warm lifetime (the hoisted-client Lambda pattern)."""
+    global _S3_CLIENT
+    if _S3_CLIENT is None:
+        import boto3  # provided by the Lambda runtime
+
+        _S3_CLIENT = boto3.client("s3")
+    return _S3_CLIENT
+
+
+class S3OnlineFeatureStore:
+    """Online feature lookup backed by a JSON object in S3: `{transaction_id: {features...}}`.
+
+    This is the deployed online store for the demo: Terraform seeds a small, KMS-encrypted
+    object with representative transactions, and the Lambda resolves an id to its 15 features
+    here before scoring. A production system would serve these from the Mosaic online Feature
+    Store; the SEAM is identical (id -> features), so swapping the backing store is a change to
+    this class alone.
+
+    The parsed table is cached module-scope with a TTL, and the boto3 client and clock are
+    injectable so the lookup is unit-testable without AWS.
+    """
+
+    def __init__(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        s3_client: Any | None = None,
+        now: Callable[[], float] | None = None,
+    ) -> None:
+        self._bucket = bucket
+        self._key = key
+        self._s3_client = s3_client
+        self._now = now or time.monotonic
+
+    def _load(self) -> dict[str, dict[str, Any]]:
+        cache_key = f"{self._bucket}/{self._key}"
+        stamp = self._now()
+        cached = _FEATURES_CACHE.get(cache_key)
+        if cached is not None and stamp - cached[1] < _FEATURES_TTL_SECONDS:
+            return cached[0]
+
+        client = self._s3_client or _s3_client()
+        body = client.get_object(Bucket=self._bucket, Key=self._key)["Body"].read()
+        raw = body.decode("utf-8") if isinstance(body, bytes) else body
+        try:
+            table = json.loads(raw)
+        except (json.JSONDecodeError, TypeError) as exc:
+            _LOGGER.error(
+                "online feature object is not valid JSON at s3://%s/%s", self._bucket, self._key
+            )  # noqa: E501
+            raise FeatureStoreError("the online feature store is unreadable") from exc
+        if not isinstance(table, dict):
+            raise FeatureStoreError("the online feature store has an unexpected shape")
+        _FEATURES_CACHE[cache_key] = (table, stamp)
+        return table
+
+    def fetch(self, *, card_hash: str, transaction_id: str) -> dict[str, Any]:
+        table = self._load()
+        record = table.get(transaction_id)
+        if not isinstance(record, dict):
+            # No fabricated score for an id the store has never seen — the handler turns this
+            # into a clean action-group failure the agent can reason about.
+            raise FeatureStoreError(f"no online features for transaction {transaction_id!r}")
+        # `card_hash` is a secondary key: if the record carries one, it must match, so a wrong
+        # pairing is refused rather than silently scoring another transaction's features.
+        stored_hash = record.get("card_hash")
+        if stored_hash is not None and str(stored_hash) != card_hash:
+            raise FeatureStoreError(f"card_hash does not match transaction {transaction_id!r}")
+        return {name: value for name, value in record.items() if name != "card_hash"}

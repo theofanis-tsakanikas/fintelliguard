@@ -1243,6 +1243,20 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/infra/test_uc_external_locations.py",
         must_fail="test_readonly_external_location_prefixes_are_seeded_by_a_marker_object",
     ),
+    Attack(
+        name="lambda-env-read-not-set",
+        rationale=(
+            "The Tier-2 Lambda reads its config from os.environ; drop one of the keys "
+            "lambda.tf sets and the function KeyErrors on its FIRST real invocation — after a "
+            "green deploy, in the request path, looking like a scoring outage. A unit test "
+            "injects Dependencies and never sees it; terraform validate sees a string, not a ref."
+        ),
+        path="agents/bedrock/terraform/lambda.tf",
+        old="      ONLINE_FEATURE_KEY    = local.aws.online_feature_key\n",
+        new="",
+        gate="tests/agents/bedrock/test_lambda_env_wiring.py",
+        must_fail="test_every_env_var_the_lambda_reads_is_set_by_terraform",
+    ),
 )
 
 

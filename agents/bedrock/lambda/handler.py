@@ -14,8 +14,8 @@ from clients import (
     FeatureStore,
     FraudScoreService,
     MosaicModelServingClient,
-    OnlineFeatureStore,
-    get_databricks_token,
+    S3OnlineFeatureStore,
+    get_databricks_oauth_token,
 )
 from errors import ActionGroupError, FeatureStoreError, FraudScoreError
 from response import build_failure_response, build_success_response
@@ -72,5 +72,10 @@ def lambda_handler(
 def _default_dependencies() -> Dependencies:
     endpoint_url = os.environ["MOSAIC_ENDPOINT_URL"]
     secret_id = os.environ["DATABRICKS_TOKEN_SECRET_ID"]
-    fraud_score = MosaicModelServingClient(endpoint_url, lambda: get_databricks_token(secret_id))
-    return Dependencies(feature_store=OnlineFeatureStore(), fraud_score=fraud_score)
+    feature_bucket = os.environ["ONLINE_FEATURE_BUCKET"]
+    feature_key = os.environ["ONLINE_FEATURE_KEY"]
+    fraud_score = MosaicModelServingClient(
+        endpoint_url, lambda: get_databricks_oauth_token(secret_id)
+    )
+    feature_store = S3OnlineFeatureStore(feature_bucket, feature_key)
+    return Dependencies(feature_store=feature_store, fraud_score=fraud_score)

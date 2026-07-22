@@ -481,3 +481,66 @@ jobs:
           echo "serving fraud_scorer version ${version} (production alias)"
           databricks bundle deploy -t ${{ inputs.environment }} \
             --var="fraud_model_version=${version}"
+
+      # Refresh AWS creds before the cross-cloud wiring: for `full` it runs terraform apply
+      # (AWS) and a Secrets Manager write AFTER the long ML stretch, so the session assumed at
+      # job start (or before step 5) may have expired. Gated on `full`, not on training, so it
+      # always precedes step 9 in a full deploy.
+      - name: Refresh AWS credentials before the cross-cloud wiring
+        if: inputs.layers == 'full'
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: fintelliguard-apply-xcloud
+
+      # 9) Wire the Tier-2 cross-cloud contract now that BOTH sides exist: the Mosaic serving
+      # endpoint (step 8) and the Bedrock action-group Lambda (applied in the layers loop with
+      # an empty MOSAIC_ENDPOINT_URL because the endpoint did not exist yet). Resolve the
+      # endpoint's invocations URL and set it, and populate the Databricks-token secret with the
+      # service principal's OAuth credentials the Lambda exchanges for a workspace token. Only
+      # `full` deploys the Bedrock layer, so this is scoped to it.
+      - name: 9) Wire the Tier-2 cross-cloud contract (Bedrock -> Mosaic)
+        if: inputs.layers == 'full'
+        env:
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          # The served endpoint's name carries a bundle-target prefix; resolve it rather than
+          # hardcode the prefix, then build the invocations URL from the workspace host.
+          ep="$(databricks serving-endpoints list -o json \
+            | jq -r '.[].name | select(endswith("fintelliguard-fraud-score"))' | head -1)"
+          if [ -z "${ep}" ]; then
+            echo "::error::could not find the fraud-score serving endpoint to wire into Bedrock"
+            exit 1
+          fi
+          url="${DATABRICKS_HOST}/serving-endpoints/${ep}/invocations"
+          echo "wiring Bedrock action group to serving endpoint ${ep}"
+
+          # Populate the Databricks-token secret with the SP's OAuth credentials (client
+          # id/secret + token endpoint). Written from a umask-restricted temp file, never argv,
+          # and removed immediately. Secret name follows infra/aws's project/environment/name.
+          umask 077
+          creds_file="$(mktemp)"
+          jq -n \
+            --arg cid "${DATABRICKS_CLIENT_ID}" \
+            --arg csec "${DATABRICKS_CLIENT_SECRET}" \
+            --arg te "${DATABRICKS_HOST}/oidc/v1/token" \
+            '{client_id:$cid, client_secret:$csec, token_endpoint:$te}' > "${creds_file}"
+          aws secretsmanager put-secret-value \
+            --secret-id "fintelliguard/${{ inputs.environment }}/databricks/token" \
+            --secret-string "file://${creds_file}" >/dev/null
+          rm -f "${creds_file}"
+          echo "databricks/token secret populated with the SP OAuth credentials"
+
+          # Re-apply the Bedrock layer with the resolved URL. No config changed since it applied
+          # in the loop, so the only diff is the Lambda's MOSAIC_ENDPOINT_URL env var. Same
+          # plan -> apply-the-saved-plan shape as the layer loop: the diff is printed for the
+          # record and exactly it is applied.
+          terraform -chdir=agents/bedrock/terraform init -input=false >/dev/null
+          terraform -chdir=agents/bedrock/terraform plan -input=false -out=tfplan \
+            -var="mosaic_endpoint_url=${url}"
+          terraform -chdir=agents/bedrock/terraform show -no-color tfplan
+          terraform -chdir=agents/bedrock/terraform apply -input=false tfplan
+          rm -f agents/bedrock/terraform/tfplan

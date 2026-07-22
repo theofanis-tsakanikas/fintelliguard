@@ -47,16 +47,31 @@ data "aws_iam_policy_document" "lambda_inline" {
     resources = [aws_secretsmanager_secret.this["databricks/token"].arn]
   }
 
+  # Read the ONE online-feature object the action group resolves ids against — scoped to that
+  # exact key, not the bucket, so the Lambda cannot read IEEE-CIS or anything else in raw/.
+  statement {
+    sid       = "ReadOnlineFeatureObject"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.raw.arn}/${local.online_feature_key}"]
+  }
+
   statement {
     sid       = "DecryptWithCMK"
     effect    = "Allow"
     actions   = ["kms:Decrypt"]
     resources = [aws_kms_key.main.arn]
 
+    # Both services the Lambda decrypts through: Secrets Manager (the Databricks token) and S3
+    # (the online-feature object). Both are CMK-encrypted; without the S3 grant the object read
+    # fails with an AccessDenied that looks like an S3 policy gap.
     condition {
       test     = "StringEquals"
       variable = "kms:ViaService"
-      values   = ["secretsmanager.${local.region}.${local.dns_suffix}"]
+      values = [
+        "secretsmanager.${local.region}.${local.dns_suffix}",
+        "s3.${local.region}.${local.dns_suffix}",
+      ]
     }
   }
 }

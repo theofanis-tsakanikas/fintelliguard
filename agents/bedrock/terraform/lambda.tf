@@ -94,6 +94,9 @@ resource "aws_lambda_function" "fraud_scoring" {
     variables = {
       MOSAIC_ENDPOINT_URL        = var.mosaic_endpoint_url
       DATABRICKS_TOKEN_SECRET_ID = local.databricks_secret_id
+      # The online feature store the action group resolves ids against, from infra/aws.
+      ONLINE_FEATURE_BUCKET = local.aws.raw_bucket_name
+      ONLINE_FEATURE_KEY    = local.aws.online_feature_key
     }
   }
 
