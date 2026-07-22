@@ -75,6 +75,12 @@ resources:
             node_type_id: m5d.large
             num_workers: 0
             data_security_mode: SINGLE_USER
+            # ON_DEMAND, not the job-cluster default of spot-with-fallback: this is a short
+            # single-node prerequisite that is NOT auto-retried, so a SPOT_INSTANCE_TERMINATION
+            # (which killed it on deploy run 29891620343 after 14 minutes) fails the whole
+            # deploy. On-demand for a ~2-minute seed is a few cents and removes the flakiness.
+            aws_attributes:
+              availability: ON_DEMAND
             spark_conf:
               spark.master: "local[*]"
               spark.databricks.cluster.profile: singleNode

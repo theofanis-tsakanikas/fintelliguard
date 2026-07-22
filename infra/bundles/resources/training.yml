@@ -31,6 +31,12 @@ resources:
             node_type_id: m5d.xlarge
             num_workers: 0
             data_security_mode: SINGLE_USER
+            # ON_DEMAND, not spot-with-fallback: a spot kill MID-TRAINING loses the whole run,
+            # so the gate re-runs and the cluster time is paid twice. On-demand for one short
+            # training run is a few cents against exactly the wasted-retrain cost we are
+            # eliminating; reliability beats spot savings on the critical, non-retried job.
+            aws_attributes:
+              availability: ON_DEMAND
             spark_conf:
               spark.master: "local[*]"
               spark.databricks.cluster.profile: singleNode
