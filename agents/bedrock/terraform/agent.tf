@@ -1,9 +1,26 @@
 # The Tier-2 fraud-investigator agent + the FraudScoring action group + KB association.
 
+# An IN-PLACE update of aws_bedrockagent_agent DROPS the guardrail: changing foundation_model
+# returned the agent with `guardrail_configuration` null and failed with "Provider produced
+# inconsistent result after apply ... guardrail_version ... but now null" (deploy run
+# 29896616363), leaving the agent PREPARED but UNGUARDED — the regulated-output control gone.
+# The CREATE path attaches the guardrail correctly (that is how it was first attached), so any
+# change to the model recreates the agent instead of updating it in place. This input tracks
+# the model; when it changes, `replace_triggered_by` below forces replacement.
+resource "terraform_data" "agent_model" {
+  input = var.foundation_model
+}
+
 resource "aws_bedrockagent_agent" "this" {
   agent_name              = "${local.name}-fraud-investigator"
   agent_resource_role_arn = aws_iam_role.agent.arn
   foundation_model        = var.foundation_model
+
+  lifecycle {
+    # Recreate (never update in place) when the model changes — the update path drops the
+    # guardrail; the create path keeps it. See the comment above terraform_data.agent_model.
+    replace_triggered_by = [terraform_data.agent_model.output]
+  }
 
   # The agent's stored state — session data and the instruction that drives regulated
   # output — under the project CMK rather than the AWS-managed key.
