@@ -1257,6 +1257,20 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/agents/bedrock/test_lambda_env_wiring.py",
         must_fail="test_every_env_var_the_lambda_reads_is_set_by_terraform",
     ),
+    Attack(
+        name="funnel-stops-escalating-blocks",
+        rationale=(
+            "The funnel is the automatic glue: a Tier-1 'block' must escalate to a documented "
+            "Tier-2 verdict with no human writing a prompt. Narrow the flagged set to review-only "
+            "and a blocked transaction proceeds with NO compliance justification on record — the "
+            "regulated verdict silently stops being produced while every tier still looks healthy."
+        ),
+        path="ml/serving/funnel.py",
+        old='FLAGGED_DECISIONS = ("review", "block")',
+        new='FLAGGED_DECISIONS = ("review",)',
+        gate="tests/serving/test_funnel.py",
+        must_fail="test_flagged_auto_escalates_to_verdict",
+    ),
 )
 
 
