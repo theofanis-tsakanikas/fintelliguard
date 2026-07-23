@@ -73,7 +73,26 @@ class KafkaSink(Sink):
             conf["sasl.mechanisms"] = "OAUTHBEARER"
             conf["oauth_cb"] = KafkaSink._msk_iam_oauth_cb(kafka_config.region)
 
-        return Producer(conf)
+        producer = Producer(conf)
+        if kafka_config.uses_msk_iam:
+            KafkaSink._warm(producer)
+        return producer
+
+    @staticmethod
+    def _warm(producer: Any, timeout_s: int = 30) -> None:
+        """Poll until the OAUTHBEARER token is served and the brokers are reachable.
+
+        With MSK IAM the token is delivered through `oauth_cb`, which is only served during
+        poll(). A produce without a prior poll races ahead of the token and the connection fails
+        with _TRANSPORT. Polling until metadata is available is what makes the handshake succeed.
+        """
+        import time
+
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            producer.poll(0.5)
+            if producer.list_topics(timeout=5).brokers:
+                return
 
     @staticmethod
     def _msk_iam_oauth_cb(region: str):

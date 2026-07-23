@@ -116,6 +116,11 @@ output "generator_task_family" {
   value       = one(aws_ecs_task_definition.generator[*].family)
 }
 
+output "scorer_task_family" {
+  description = "Scorer (stream consumer) task-definition family, or null when enable_msk = false."
+  value       = one(aws_ecs_task_definition.scorer[*].family)
+}
+
 output "generator_security_group_id" {
   description = "Security group for the Fargate generator task."
   value       = aws_security_group.generator.id

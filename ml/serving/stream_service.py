@@ -372,6 +372,15 @@ def run(
     consumer = Consumer(
         _consumer_conf(bootstrap_servers, security_protocol, sasl_mechanism, region)
     )
+    # MSK IAM: poll until the OAUTHBEARER token is served and the brokers are reachable before
+    # subscribing. Without this the first poll races ahead of the IAM token and the connection
+    # fails with _TRANSPORT (the same fix as the producer and the probe). No-op for PLAINTEXT.
+    if security_protocol.upper() == "SASL_SSL":
+        import time as _time
+
+        _deadline = _time.time() + 30
+        while _time.time() < _deadline and not consumer.list_topics(timeout=5).brokers:
+            consumer.poll(0.5)
     consumer.subscribe([topic])
     logger.info(
         "scorer consuming %r from %s; /metrics on :%d", topic, bootstrap_servers, metrics_port

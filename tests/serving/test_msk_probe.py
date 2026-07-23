@@ -29,9 +29,18 @@ def test_sasl_conf_matches_the_simulator_producer_path():
 
     captured: dict = {}
 
+    class _Meta:
+        brokers = {0: object()}  # non-empty => the MSK warm-up sees metadata and returns
+
     class _P:
         def __init__(self, c):
             captured.update(c)
+
+        def poll(self, _timeout):
+            return 0
+
+        def list_topics(self, timeout=None):
+            return _Meta()
 
     import sys
     import types as _t

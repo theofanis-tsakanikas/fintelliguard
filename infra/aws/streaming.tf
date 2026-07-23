@@ -203,3 +203,57 @@ resource "aws_ecs_task_definition" "generator" {
 
   tags = { Name = "${local.name}-generator" }
 }
+
+# ---- The in-VPC SCORER (gated) ----------------------------------------------
+# The other half of the live cloud funnel: reads the generator's stream off MSK and scores every
+# transaction (Tier 1), escalating the flagged ones through the REAL verdict-acceptance gate +
+# output guardrail. Same image as the generator (it carries ml/ and agents/ too), just a
+# different command — one artifact to build and push.
+#
+# It scores with the bundled demo model rather than calling the Mosaic endpoint, which keeps the
+# live stream demo runnable right after the network stage, with no trained/served model. The
+# Mosaic-served score + the LIVE Bedrock verdict are exercised separately by
+# `python -m ml.serving.funnel` against the deployed endpoints (Tier 1 -> Tier 2, no prompt).
+resource "aws_ecs_task_definition" "scorer" {
+  count = var.enable_msk ? 1 : 0
+
+  family                   = "${local.name}-scorer"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "512"
+  memory                   = "1024" # XGBoost + pandas need more headroom than the producer
+  execution_role_arn       = aws_iam_role.ecs_execution[0].arn
+  task_role_arn            = aws_iam_role.msk_access.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "scorer"
+      essential = true
+      image     = "${aws_ecr_repository.generator[0].repository_url}:${var.generator_image_tag}"
+      command = [
+        "python", "-m", "ml.serving.stream_service",
+        "--bootstrap-servers", one(aws_msk_cluster.this[*].bootstrap_brokers_sasl_iam),
+        "--topic", "txn.raw",
+        "--metrics-port", "8000",
+        "--environment", "aws",
+      ]
+      environment = [
+        # These turn on MSK IAM (SASL_SSL/OAUTHBEARER) in the consumer; the warm-up poll that
+        # makes the IAM handshake succeed lives in ml/serving/stream_service.py.
+        { name = "KAFKA_SECURITY_PROTOCOL", value = "SASL_SSL" },
+        { name = "KAFKA_SASL_MECHANISM", value = "OAUTHBEARER" },
+        { name = "AWS_REGION", value = local.region },
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.generator[0].name
+          "awslogs-region"        = local.region
+          "awslogs-stream-prefix" = "scorer"
+        }
+      }
+    }
+  ])
+
+  tags = { Name = "${local.name}-scorer" }
+}

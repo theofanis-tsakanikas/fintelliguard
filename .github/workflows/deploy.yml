@@ -691,3 +691,24 @@ jobs:
           export BUNDLE_VAR_msk_instance_profile_arn="${ip_arn}"
           databricks bundle deploy -t ${{ inputs.environment }}
           databricks bundle run -t ${{ inputs.environment }} msk_probe
+
+      # With the private path proven, start the live funnel: the generator produces transactions
+      # to MSK and the scorer consumes and scores them (Tier 1) inside the VPC. Both are detached
+      # one-shot tasks — nothing is left as a standing service; `destroy` stops them (see
+      # destroy.yml's generator-stop step) and they are visible in CloudWatch meanwhile.
+      - name: streaming) Start the in-VPC generator + scorer (live funnel)
+        if: ${{ inputs.stage == 'streaming' }}
+        run: |
+          set -euo pipefail
+          cluster="$(terraform -chdir=infra/aws output -raw generator_ecs_cluster)"
+          subnets="$(terraform -chdir=infra/aws output -json private_subnet_ids | jq -r 'join(",")')"
+          sg="$(terraform -chdir=infra/aws output -raw generator_security_group_id)"
+          net="awsvpcConfiguration={subnets=[${subnets}],securityGroups=[${sg}],assignPublicIp=DISABLED}"
+          for family in generator scorer; do
+            task="$(terraform -chdir=infra/aws output -raw ${family}_task_family)"
+            echo "starting ${task}"
+            aws ecs run-task --cluster "${cluster}" --launch-type FARGATE \
+              --task-definition "${task}" --network-configuration "${net}" \
+              --count 1 --query 'tasks[0].taskArn' --output text
+          done
+          echo "live funnel started — logs: /ecs/$(terraform -chdir=infra/aws output -raw generator_ecs_cluster | sed 's/-streaming//')-generator"

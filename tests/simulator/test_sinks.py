@@ -93,9 +93,18 @@ def _capture_producer_conf(kafka_config) -> dict[str, Any]:
     """Build the producer against a fake confluent_kafka and return the conf it was given."""
     captured: dict[str, Any] = {}
 
+    class _Meta:
+        brokers = {0: object()}  # non-empty => warm-up sees the brokers and returns
+
     class _Producer:
         def __init__(self, conf):
             captured.update(conf)
+
+        def poll(self, _timeout):  # the MSK warm-up polls to serve the token
+            return 0
+
+        def list_topics(self, timeout=None):  # warm-up checks metadata is available
+            return _Meta()
 
     fake = types.ModuleType("confluent_kafka")
     fake.Producer = _Producer
