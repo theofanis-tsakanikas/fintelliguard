@@ -406,3 +406,60 @@ def test_a_programming_error_in_the_record_is_not_swallowed_as_a_refusal(scorer)
             ServingMetrics(registry=CollectorRegistry()),
             MemorySink(),
         )
+
+
+# --------------------------------------------------------------------------- #
+# B: the consumer can authenticate to MSK with IAM (default PLAINTEXT, local unchanged)
+# --------------------------------------------------------------------------- #
+def test_consumer_is_plaintext_by_default():
+    from ml.serving.stream_service import _consumer_conf
+
+    conf = _consumer_conf("localhost:9092", "PLAINTEXT", "", "eu-central-1")
+    assert set(conf) == {"bootstrap.servers", "group.id", "auto.offset.reset"}
+    assert "security.protocol" not in conf  # the local funnel is untouched
+
+
+def test_consumer_enables_msk_iam_when_asked():
+    from ml.serving.stream_service import _consumer_conf
+
+    conf = _consumer_conf("b:9098", "SASL_SSL", "OAUTHBEARER", "eu-central-1")
+    assert conf["security.protocol"] == "SASL_SSL"
+    assert conf["sasl.mechanisms"] == "OAUTHBEARER"
+    assert callable(conf["oauth_cb"])  # signs the IAM token at runtime, no stored secret
+
+
+# --------------------------------------------------------------------------- #
+# C: the Tier-2 reasoner is an injectable seam; escalation stays automatic
+# --------------------------------------------------------------------------- #
+class _FlaggingScorer:
+    class config:  # noqa: N801
+        model_version = "test:1"
+
+    def score(self, features):
+        return {
+            "fraud_score": 0.95,
+            "threshold": 0.7,
+            "decision_hint": "block",
+            "model_version": "test:1",
+            "top_features": [{"name": "amount_zscore", "value": 3.0, "contribution": 0.5}],
+        }
+
+
+def test_a_flagged_transaction_uses_the_injected_verdict_builder():
+    calls = []
+
+    def _builder(scored):
+        calls.append(scored["decision_hint"])
+        return build_stub_verdict(scored)  # reuse the valid shape
+
+    result = process_transaction(
+        _txn("t-flag"),
+        CardHistoryStore(),
+        _FlaggingScorer(),
+        GuardrailPolicy(),
+        ServingMetrics(registry=CollectorRegistry()),
+        verdict_builder=_builder,
+    )
+    # Escalation is automatic on a flagged score — the injected reasoner was used, no prompt.
+    assert calls == ["block"]
+    assert "verdict_accepted" in result

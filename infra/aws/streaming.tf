@@ -72,7 +72,11 @@ resource "aws_security_group" "generator" {
 resource "aws_ecr_repository" "generator" {
   count = var.enable_msk ? 1 : 0
 
-  name                 = "${local.name}-generator"
+  name = "${local.name}-generator"
+  # MUTABLE, deliberately: the streaming stage rebuilds and re-pushes the generator image under
+  # the `:latest` tag every run, which immutable tags forbid. This is a demo artifact, not a
+  # released image whose provenance must be pinned.
+  #checkov:skip=CKV_AWS_51:generator image is re-pushed under :latest each run; immutable tags block that
   image_tag_mutability = "MUTABLE"
   force_delete         = true # a demo image; let `destroy` clean the repo without manual purge
 
@@ -93,6 +97,14 @@ resource "aws_ecs_cluster" "streaming" {
   count = var.enable_msk ? 1 : 0
 
   name = "${local.name}-streaming"
+
+  # Container Insights on: the generator's task metrics/logs go to CloudWatch, consistent with
+  # the VPC flow logs and MSK broker logs — the estate records what runs at every boundary.
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+
   tags = { Name = "${local.name}-streaming" }
 }
 

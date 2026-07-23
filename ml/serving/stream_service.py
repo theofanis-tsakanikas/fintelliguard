@@ -17,6 +17,7 @@ import argparse
 import json
 import logging
 from collections import deque
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -125,6 +126,11 @@ def build_stub_verdict(
     return verdict, context
 
 
+# The Tier-2 reasoner seam: scored transaction -> (verdict, context) for the acceptance gate.
+# build_stub_verdict is the offline default; a live-Bedrock deployment injects its own.
+VerdictBuilder = Callable[[dict], tuple[dict, VerdictContext]]
+
+
 # Where a withheld verdict goes. A rejection with nowhere to go is a rejection nobody acts
 # on; naming the destination is the minimum an "effective human oversight" claim needs.
 _REVIEW_QUEUE = "tier3.analyst_review"
@@ -216,6 +222,7 @@ def process_transaction(
     guardrail: GuardrailPolicy,
     metrics: ServingMetrics,
     decisions: DecisionSink | None = None,
+    verdict_builder: VerdictBuilder | None = None,
 ) -> dict:
     """Run one transaction through the whole funnel; update metrics; return a summary.
 
@@ -223,6 +230,12 @@ def process_transaction(
     not only the flagged ones. The AI-Act document already claims this exists; nothing
     implemented it, and the nearest thing was a stdout log line for flagged cases carrying
     no model version.
+
+    `verdict_builder` is the Tier-2 reasoner seam. Default is the offline STUB; a deployment
+    with a live Bedrock agent injects a builder that returns the SAME `(verdict, context)`
+    shape from the agent's structured output, so the real acceptance gate + guardrail below
+    judge a live verdict without changing this escalation flow. The escalation itself —
+    flagged transaction -> Tier 2 — is unconditional and automatic; only the reasoner varies.
     """
     card = str(contract.get("card_hash", ""))
     try:
@@ -248,9 +261,13 @@ def process_transaction(
     }
 
     tier2: dict[str, object] = {}
-    # Tier 2 (verdict gate + guardrail) only for flagged transactions.
+    # Tier 2 (verdict gate + guardrail) only for flagged transactions. This is the automatic
+    # Tier-1 -> Tier-2 escalation: no human, no prompt — the score alone triggers it.
     if scored["decision_hint"] in (DECISION_REVIEW, DECISION_BLOCK):
-        verdict, context = build_stub_verdict(scored)
+        # Resolved by NAME at call time (not captured as a default), so a test or a live
+        # deployment that patches build_stub_verdict is honoured.
+        build = verdict_builder or build_stub_verdict
+        verdict, context = build(scored)
         gate = evaluate_verdict(verdict, context)
         metrics.record_verdict(gate.accepted)
         grounding = estimate_grounding(verdict["reasoning"], STUB_REFERENCES)
@@ -295,6 +312,34 @@ def process_transaction(
     return result
 
 
+def _consumer_conf(
+    bootstrap_servers: str, security_protocol: str, sasl_mechanism: str, region: str
+) -> dict:
+    """Base consumer config, plus MSK IAM (SASL_SSL/OAUTHBEARER) when asked for.
+
+    Default PLAINTEXT for local Docker Kafka, so the local funnel is untouched. SASL_SSL +
+    OAUTHBEARER authenticates to MSK with a token signed at runtime from the task's IAM role
+    (no stored secret) — the consumer mirror of the simulator's producer path.
+    """
+    conf = {
+        "bootstrap.servers": bootstrap_servers,
+        "group.id": "fintelliguard-scorer",
+        "auto.offset.reset": "earliest",
+    }
+    if security_protocol.upper() == "SASL_SSL" and sasl_mechanism.upper() == "OAUTHBEARER":
+        conf["security.protocol"] = "SASL_SSL"
+        conf["sasl.mechanisms"] = "OAUTHBEARER"
+
+        def _oauth_cb(_config: str):
+            from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
+
+            token, expiry_ms = MSKAuthTokenProvider.generate_auth_token(region)
+            return token, expiry_ms / 1000.0
+
+        conf["oauth_cb"] = _oauth_cb
+    return conf
+
+
 def run(
     *,
     bootstrap_servers: str,
@@ -304,6 +349,9 @@ def run(
     environment: str = "local",
     max_messages: int | None = None,
     decision_log_path: str = "/var/log/fintelliguard/decisions.jsonl",
+    security_protocol: str = "PLAINTEXT",
+    sasl_mechanism: str = "",
+    region: str = "eu-central-1",
 ) -> None:
     """Consume the topic and serve `/metrics`. `confluent_kafka` is imported lazily so the
     module (and its unit tests) stay importable without the native Kafka client."""
@@ -322,11 +370,7 @@ def run(
     serve_metrics(metrics_port)
 
     consumer = Consumer(
-        {
-            "bootstrap.servers": bootstrap_servers,
-            "group.id": "fintelliguard-scorer",
-            "auto.offset.reset": "earliest",
-        }
+        _consumer_conf(bootstrap_servers, security_protocol, sasl_mechanism, region)
     )
     consumer.subscribe([topic])
     logger.info(
@@ -361,6 +405,8 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> None:
+    import os
+
     parser = argparse.ArgumentParser(
         description="Local fraud-scoring funnel (Kafka -> features -> scorer -> gate -> metrics)."
     )
@@ -375,6 +421,10 @@ def main(argv: list[str] | None = None) -> None:
         topic=args.topic,
         metrics_port=args.metrics_port,
         environment=args.environment,
+        # MSK IAM is opt-in via env (set on the in-VPC Fargate consumer); default PLAINTEXT.
+        security_protocol=os.environ.get("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT"),
+        sasl_mechanism=os.environ.get("KAFKA_SASL_MECHANISM", ""),
+        region=os.environ.get("AWS_REGION", "eu-central-1"),
     )
 
 

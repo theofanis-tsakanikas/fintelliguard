@@ -29,7 +29,9 @@ FLAGGED_DECISIONS = ("review", "block")
 
 # transaction_id -> {card_hash, ...15 features}. The same seed the Tier-2 online store uses,
 # parity-tested against infra/aws/online_features.tf.
-_DEMO = Path(__file__).resolve().parents[1].parent / "agents" / "databricks" / "demo_transactions.json"
+_DEMO = (
+    Path(__file__).resolve().parents[1].parent / "agents" / "databricks" / "demo_transactions.json"
+)
 
 ScoreFn = Callable[[str, str], dict[str, Any]]
 VerdictFn = Callable[[str, str], str]
@@ -98,9 +100,13 @@ def _serving_score_fn(region_host: str | None = None) -> ScoreFn:
     from databricks.sdk import WorkspaceClient
 
     w = WorkspaceClient()
-    endpoints = [e.name for e in w.serving_endpoints.list() if e.name.endswith("fintelliguard-fraud-score")]
+    endpoints = [
+        e.name for e in w.serving_endpoints.list() if e.name.endswith("fintelliguard-fraud-score")
+    ]
     if not endpoints:
-        raise SystemExit("no fintelliguard-fraud-score serving endpoint found — is the stack deployed?")
+        raise SystemExit(
+            "no fintelliguard-fraud-score serving endpoint found — is the stack deployed?"
+        )
     endpoint = endpoints[0]
 
     def score(transaction_id: str, card_hash: str) -> dict[str, Any]:
@@ -134,7 +140,10 @@ def _agent_verdict_fn(region: str) -> VerdictFn:
             "obligations from the knowledge base, and recommend allow, review, or block."
         )
         resp = runtime.invoke_agent(
-            agentId=agent_id, agentAliasId=alias_id, sessionId=f"funnel-{transaction_id}", inputText=prompt
+            agentId=agent_id,
+            agentAliasId=alias_id,
+            sessionId=f"funnel-{transaction_id}",
+            inputText=prompt,
         )
         return "".join(
             ev["chunk"]["bytes"].decode("utf-8") for ev in resp["completion"] if "chunk" in ev
@@ -158,7 +167,9 @@ def main(argv: list[str] | None = None) -> int:
     result = build_default_funnel(args.region).run(args.transaction_id, args.card_hash)
     print(f"  fraud_score = {result.fraud_score:.4f}  →  decision = {result.decision.upper()}")
     for f in result.top_features[:5]:
-        print(f"    · {f.get('name')} = {f.get('value')}  (contribution {f.get('contribution'):+.2f})")
+        print(
+            f"    · {f.get('name')} = {f.get('value')}  (contribution {f.get('contribution'):+.2f})"
+        )
     if not result.escalated:
         print("  cleared at Tier 1 — no escalation. ✅")
         return 0
