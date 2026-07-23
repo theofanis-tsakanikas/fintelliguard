@@ -682,7 +682,12 @@ jobs:
             echo "::error::MSK has no bootstrap brokers — run the network stage first (enable_msk=true)"
             exit 1
           fi
-          databricks bundle deploy -t ${{ inputs.environment }} \
-            --var="kafka_bootstrap=${boot}" \
-            --var="msk_instance_profile_arn=${ip_arn}"
+          # Pass the vars as BUNDLE_VAR_* env, NOT --var: the MSK bootstrap string is a
+          # COMMA-separated list of brokers (b-1...:9098,b-2...:9098), and `databricks bundle
+          # --var` splits its value on commas as multiple assignments — so the second broker
+          # was read as a bare variable name ("unexpected flag value for variable assignment").
+          # The env form takes the whole value verbatim.
+          export BUNDLE_VAR_kafka_bootstrap="${boot}"
+          export BUNDLE_VAR_msk_instance_profile_arn="${ip_arn}"
+          databricks bundle deploy -t ${{ inputs.environment }}
           databricks bundle run -t ${{ inputs.environment }} msk_probe
