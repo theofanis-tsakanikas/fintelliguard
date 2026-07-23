@@ -102,6 +102,13 @@ jobs:
     name: Plan the foundation layer (${{ inputs.environment }})
     needs: validate
     runs-on: ubuntu-latest
+    # The OIDC trust (infra/aws/bootstrap/oidc.tf) admits either a protected branch ref OR a
+    # deploy environment as the token subject. Without an environment this job's subject is
+    # `ref:refs/heads/<branch>`, which is trusted ONLY on the protected branch (main) — so on
+    # any other branch the role assumption is denied. Binding it to the environment (as the
+    # apply job already is) makes the subject `environment:<env>`, trusted from any branch. No
+    # protection rule is attached to `dev`, so this adds a trust scope, not an approval gate.
+    environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
