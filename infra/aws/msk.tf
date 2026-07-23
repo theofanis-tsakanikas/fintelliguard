@@ -8,6 +8,23 @@
 # Smallest viable config: one kafka.t3.small broker per AZ, 10 GB EBS each, IAM SASL
 # auth, TLS in transit, CMK at rest.
 
+# Broker configuration: enable topic auto-creation so the IAM producer path can create a topic
+# on first write (see configuration_info on the cluster below). replication.factor and
+# insync.replicas are sized for the az_count-broker cluster; a demo tolerates isr=1.
+resource "aws_msk_configuration" "this" {
+  count = var.enable_msk ? 1 : 0
+
+  name           = "${local.name}-autocreate"
+  kafka_versions = [var.msk_kafka_version]
+
+  server_properties = <<-PROPS
+    auto.create.topics.enable=true
+    default.replication.factor=${var.az_count}
+    min.insync.replicas=1
+    num.partitions=1
+  PROPS
+}
+
 resource "aws_msk_cluster" "this" {
   count = var.enable_msk ? 1 : 0
 
@@ -31,6 +48,17 @@ resource "aws_msk_cluster" "this" {
     sasl {
       iam = true
     }
+  }
+
+  # Apply the custom broker configuration below. Without it MSK runs its defaults, where
+  # auto.create.topics.enable=false — so a producer writing to a topic that does not exist yet
+  # (the simulator's txn.raw, the probe's txn.probe) silently fails to deliver, and there is no
+  # AdminClient path that works: confluent_kafka's admin cannot serve the OAUTHBEARER token in
+  # time and times out "waiting for controller". Enabling broker-side auto-create is the one
+  # mechanism that lets the IAM producer path (the proven one) create the topic on first write.
+  configuration_info {
+    arn      = aws_msk_configuration.this[0].arn
+    revision = aws_msk_configuration.this[0].latest_revision
   }
 
   encryption_info {
