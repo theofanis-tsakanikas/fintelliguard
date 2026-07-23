@@ -68,6 +68,13 @@ local = [
     "pyarrow==15.0.2",
 ]
 
+# The AWS MSK IAM token signer, needed ONLY by the in-VPC Fargate producer that authenticates
+# to MSK with IAM. Kept out of `local` so the Docker funnel (PLAINTEXT Kafka) stays lean and
+# cloud-SDK-free; the streaming generator image installs `.[local,msk]`.
+msk = [
+    "aws-msk-iam-sasl-signer-python==1.0.1",
+]
+
 [tool.setuptools.packages.find]
 # Explicit discovery: the repo is flat-layout with several top-level dirs that
 # are NOT Python packages (infra/, dashboards/, docs/) — without this, modern

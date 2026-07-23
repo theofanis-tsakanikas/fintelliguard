@@ -58,6 +58,31 @@ def kafka_bootstrap(spark: Any) -> str:
     return _conf(spark, "kafka_bootstrap")
 
 
+def kafka_security_protocol(spark: Any) -> str:
+    """PLAINTEXT for local Docker Kafka (the default), SASL_SSL for MSK with IAM auth."""
+    return _conf(spark, "kafka_security_protocol", "PLAINTEXT").strip().upper()
+
+
+def kafka_source_options(spark: Any) -> dict[str, str]:
+    """Extra reader options for the Kafka source.
+
+    Empty for local PLAINTEXT Kafka, so the local funnel is untouched. When the security
+    protocol is SASL_SSL (MSK), returns the AWS_MSK_IAM SASL wiring: the reader authenticates
+    to the brokers using the cluster's instance-profile credentials (see infra/aws
+    streaming.tf + infra/databricks streaming.tf), with no secret in code or conf.
+    """
+    if kafka_security_protocol(spark) != "SASL_SSL":
+        return {}
+    return {
+        "kafka.security.protocol": "SASL_SSL",
+        "kafka.sasl.mechanism": "AWS_MSK_IAM",
+        "kafka.sasl.jaas.config": "software.amazon.msk.auth.iam.IAMLoginModule required;",
+        "kafka.sasl.client.callback.handler.class": (
+            "software.amazon.msk.auth.iam.IAMClientCallbackHandler"
+        ),
+    }
+
+
 def streaming_enabled(spark: Any) -> bool:
     """Whether the Kafka stream lineage is part of this run. Default TRUE (see module docs)."""
     return _conf(spark, "streaming_enabled", "true").strip().lower() == "true"

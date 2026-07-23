@@ -1271,6 +1271,28 @@ ATTACKS: tuple[Attack, ...] = (
         gate="tests/serving/test_funnel.py",
         must_fail="test_flagged_auto_escalates_to_verdict",
     ),
+    Attack(
+        name="msk-closed-to-the-databricks-data-plane",
+        rationale=(
+            "The private streaming path depends on ONE security-group rule: the MSK SG admitting "
+            "the Databricks data-plane SG on 9098. Drop it and a classic Spark cluster's SYN to a "
+            "broker is discarded — the read hangs then times out, three layers downstream, as "
+            "'no data' rather than 'blocked'. terraform validate sees a reference-valid config; "
+            "only parsing the rule catches its absence."
+        ),
+        path="infra/aws/network.tf",
+        old="""  ingress {
+    description     = "Kafka IAM SASL from the Databricks data plane"
+    from_port       = 9098
+    to_port         = 9098
+    protocol        = "tcp"
+    security_groups = [aws_security_group.databricks_data_plane.id]
+  }
+""",
+        new="",
+        gate="tests/infra/test_streaming_connectivity.py",
+        must_fail="test_msk_admits_the_databricks_data_plane_on_the_iam_sasl_port",
+    ),
 )
 
 

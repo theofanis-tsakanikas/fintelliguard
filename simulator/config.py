@@ -20,19 +20,37 @@ class SinkType(StrEnum):
 
 @dataclass(frozen=True)
 class KafkaConfig:
-    """Kafka connection settings, sourced from the environment."""
+    """Kafka connection settings, sourced from the environment.
+
+    `security_protocol` defaults to PLAINTEXT (local Docker Kafka), so the local funnel is
+    untouched. Set it to SASL_SSL with `sasl_mechanism=OAUTHBEARER` to produce to MSK with
+    IAM auth — the token is signed at runtime from the task's role, never a stored secret.
+    """
 
     bootstrap_servers: str = "localhost:9092"
     topic: str = "txn.raw"
     client_id: str = "fintelliguard-simulator"
+    security_protocol: str = "PLAINTEXT"
+    sasl_mechanism: str = ""
+    region: str = "eu-central-1"
+
+    @property
+    def uses_msk_iam(self) -> bool:
+        return (
+            self.security_protocol.upper() == "SASL_SSL"
+            and self.sasl_mechanism.upper() == "OAUTHBEARER"
+        )
 
     @classmethod
     def from_env(cls) -> KafkaConfig:
-        """Build from `KAFKA_BOOTSTRAP_SERVERS` / `KAFKA_TOPIC` / `KAFKA_CLIENT_ID`."""
+        """Build from `KAFKA_BOOTSTRAP_SERVERS` / `KAFKA_TOPIC` / `KAFKA_CLIENT_ID` / SASL vars."""
         return cls(
             bootstrap_servers=os.environ.get("KAFKA_BOOTSTRAP_SERVERS", cls.bootstrap_servers),
             topic=os.environ.get("KAFKA_TOPIC", cls.topic),
             client_id=os.environ.get("KAFKA_CLIENT_ID", cls.client_id),
+            security_protocol=os.environ.get("KAFKA_SECURITY_PROTOCOL", cls.security_protocol),
+            sasl_mechanism=os.environ.get("KAFKA_SASL_MECHANISM", cls.sasl_mechanism),
+            region=os.environ.get("AWS_REGION", cls.region),
         )
 
 

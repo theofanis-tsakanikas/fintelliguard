@@ -81,13 +81,19 @@ if STREAMING_ENABLED:
         comment="Raw simulator transactions from Kafka — schema-rescued, with ingest metadata.",
     )
     def transactions_stream() -> DataFrame:
-        raw = (
+        reader = (
             spark.readStream.format("kafka")
             # This option was simply absent, so even a configured MSK could not be reached.
             .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
             .option("subscribe", KAFKA_TOPIC)
-            .load()
-            .select(F.col("value").cast("string").alias("value"), F.col("offset").alias("offset"))
+        )
+        # MSK adds SASL_SSL + AWS_MSK_IAM here; local PLAINTEXT Kafka adds nothing, so the
+        # local funnel reads exactly as before. Auth is the cluster's instance profile — no
+        # secret in code or conf. See pipelines/runtime_config.kafka_source_options.
+        for key, value in runtime_config.kafka_source_options(spark).items():
+            reader = reader.option(key, value)
+        raw = reader.load().select(
+            F.col("value").cast("string").alias("value"), F.col("offset").alias("offset")
         )
         return bronze_transforms.parse_transactions_stream(raw)
 

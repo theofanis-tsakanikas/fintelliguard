@@ -75,3 +75,30 @@ def test_the_kafka_reader_specifies_bootstrap_servers():
     assert "kafka.bootstrap.servers" in options, (
         "the Kafka readStream does not set kafka.bootstrap.servers — the source cannot connect"
     )
+
+
+def test_local_plaintext_adds_no_sasl_options():
+    """The default (and local Docker Kafka) must stay PLAINTEXT — the local funnel is untouched."""
+    spark = _Spark({})  # no kafka_security_protocol set
+    assert runtime_config.kafka_security_protocol(spark) == "PLAINTEXT"
+    assert runtime_config.kafka_source_options(spark) == {}
+
+
+def test_msk_turns_on_aws_msk_iam_sasl():
+    spark = _Spark({"fintelliguard.kafka_security_protocol": "SASL_SSL"})
+    opts = runtime_config.kafka_source_options(spark)
+    assert opts["kafka.security.protocol"] == "SASL_SSL"
+    assert opts["kafka.sasl.mechanism"] == "AWS_MSK_IAM"
+    # The callback handler is what actually signs the IAM token; a mechanism without it fails.
+    assert "IAMClientCallbackHandler" in opts["kafka.sasl.client.callback.handler.class"]
+
+
+def test_the_reader_applies_the_source_options():
+    """bronze_pipeline must feed kafka_source_options into the reader, not ignore them."""
+    src = (Path(__file__).resolve().parents[2] / "pipelines/bronze/bronze_pipeline.py").read_text(
+        "utf-8"
+    )
+    assert "kafka_source_options" in src, (
+        "bronze_pipeline does not apply runtime_config.kafka_source_options — the MSK SASL "
+        "wiring is computed but never handed to the Kafka reader"
+    )

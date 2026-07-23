@@ -1,0 +1,50 @@
+# The network-stage gate: proves a classic Databricks cluster reaches MSK privately and
+# authenticates with IAM, by doing a full Kafka round-trip. RUN by the streaming stage of the
+# deploy workflow AFTER infra/aws (enable_msk=true) + infra/databricks have applied, and BEFORE
+# anything expensive. If this job fails, the private path is not working and the stage stops
+# here — cheaply — instead of failing later inside the DLT pipeline as a silent "no data".
+#
+# The cluster carries the MSK instance profile (aws_attributes.instance_profile_arn) and the
+# AWS MSK IAM auth provider (the maven library); both are what let Spark's Kafka client speak
+# SASL_SSL/AWS_MSK_IAM to the brokers with no secret.
+
+resources:
+  jobs:
+    msk_probe:
+      name: fintelliguard-msk-probe
+
+      tasks:
+        - task_key: probe
+          spark_python_task:
+            # Relative to THIS file's dir (infra/bundles/streaming), like every other resource.
+            python_file: ../../../ml/serving/msk_probe.py
+            parameters:
+              - --bootstrap
+              - ${var.kafka_bootstrap}
+              - --topic
+              - txn.probe
+              - --timeout
+              - "150"
+
+          new_cluster:
+            spark_version: 15.4.x-scala2.12
+            node_type_id: m5d.xlarge
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            # ON_DEMAND: a one-shot connectivity check must not be killed mid-probe and reported
+            # as a false failure of the private path.
+            aws_attributes:
+              availability: ON_DEMAND
+              # The instance profile is what makes IAM auth to MSK possible from this cluster.
+              instance_profile_arn: ${var.msk_instance_profile_arn}
+            spark_conf:
+              spark.master: "local[*]"
+              spark.databricks.cluster.profile: singleNode
+            custom_tags:
+              ResourceClass: SingleNode
+
+          libraries:
+            # The AWS MSK IAM auth provider referenced by the SASL callback handler class. The
+            # Kafka connector itself ships with the Databricks runtime; only this is extra.
+            - maven:
+                coordinates: software.amazon.msk:aws-msk-iam-auth:2.2.0

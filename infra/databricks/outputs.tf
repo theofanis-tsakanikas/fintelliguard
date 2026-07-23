@@ -37,3 +37,8 @@ output "network_id" {
   description = "Databricks customer-managed network id (infra/aws VPC)."
   value       = databricks_mws_networks.this.network_id
 }
+
+output "msk_instance_profile_id" {
+  description = "Registered Databricks instance-profile id for a classic cluster to reach MSK with IAM."
+  value       = databricks_instance_profile.msk_access.id
+}

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from typing import Any
 from unittest.mock import Mock
 
@@ -85,3 +87,49 @@ def test_runner_can_omit_ground_truth_for_production_path():
 def test_sink_type_enum_round_trips():
     assert SinkType("local") is SinkType.LOCAL
     assert SinkType("kafka") is SinkType.KAFKA
+
+
+def _capture_producer_conf(kafka_config) -> dict[str, Any]:
+    """Build the producer against a fake confluent_kafka and return the conf it was given."""
+    captured: dict[str, Any] = {}
+
+    class _Producer:
+        def __init__(self, conf):
+            captured.update(conf)
+
+    fake = types.ModuleType("confluent_kafka")
+    fake.Producer = _Producer
+    sys.modules["confluent_kafka"] = fake
+    try:
+        KafkaSink._build_producer(kafka_config)
+    finally:
+        sys.modules.pop("confluent_kafka", None)
+    return captured
+
+
+def test_default_kafka_config_is_plaintext_and_needs_no_signer():
+    """The local funnel path: PLAINTEXT, so _build_producer sets no SASL and imports no signer."""
+    captured = _capture_producer_conf(KafkaConfig())
+    assert set(captured) == {"bootstrap.servers", "client.id"}
+    assert "security.protocol" not in captured
+
+
+def test_msk_config_enables_sasl_oauthbearer_with_a_token_callback():
+    cfg = KafkaConfig(
+        bootstrap_servers="b:9098", security_protocol="SASL_SSL", sasl_mechanism="OAUTHBEARER"
+    )
+    assert cfg.uses_msk_iam
+    captured = _capture_producer_conf(cfg)
+    assert captured["security.protocol"] == "SASL_SSL"
+    assert captured["sasl.mechanisms"] == "OAUTHBEARER"
+    assert callable(captured["oauth_cb"]), "MSK IAM needs an oauth_cb that signs the token"
+
+
+def test_kafka_config_reads_sasl_from_env(monkeypatch):
+    monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "broker:9098")
+    monkeypatch.setenv("KAFKA_SECURITY_PROTOCOL", "SASL_SSL")
+    monkeypatch.setenv("KAFKA_SASL_MECHANISM", "OAUTHBEARER")
+    monkeypatch.setenv("AWS_REGION", "eu-central-1")
+    cfg = KafkaConfig.from_env()
+    assert cfg.uses_msk_iam
+    assert cfg.region == "eu-central-1"

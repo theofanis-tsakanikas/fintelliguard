@@ -39,6 +39,7 @@ _DISTRIBUTION = {
     "confluent_kafka": "confluent-kafka",
     "prometheus_client": "prometheus-client",
     "dateutil": "python-dateutil",
+    "aws_msk_iam_sasl_signer": "aws-msk-iam-sasl-signer-python",
     # Ships inside boto3; there is no separate thing to declare.
     "botocore": "boto3",
 }

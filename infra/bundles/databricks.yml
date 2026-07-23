@@ -80,6 +80,12 @@ variables:
   pipeline_continuous:
     description: DLT execution mode — true=continuous (streaming), false=triggered (batch).
     default: false
+  # The Kafka/MSK bundle variables live in the dedicated streaming bundle
+  # (infra/bundles/streaming), which is what the streaming stage deploys and runs. The DLT
+  # medallion pipeline here consumes MSK only once its cluster carries the MSK instance profile
+  # and its config sets fintelliguard.kafka_bootstrap + kafka_security_protocol — the live
+  # Tier-1-reads-MSK wiring, deliberately a separate step from proving the private path (probe).
+  # The consumer CAPABILITY is already in pipelines/runtime_config.py (default PLAINTEXT).
 
 # The DLT sources live at the REPO ROOT (`pipelines/`), not under this bundle. By default a
 # bundle syncs only files beneath its own root, so referencing them failed with "path ... is

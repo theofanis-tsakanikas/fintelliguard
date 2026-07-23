@@ -116,6 +116,12 @@ variable "msk_broker_ebs_gb" {
   default     = 10
 }
 
+variable "generator_image_tag" {
+  description = "Image tag the Fargate generator task runs. The streaming stage builds and pushes this tag to ECR before the task definition references it."
+  type        = string
+  default     = "latest"
+}
+
 variable "flow_log_retention_days" {
   description = "Retention for VPC flow logs. 90 days covers a typical audit lookback."
   type        = number

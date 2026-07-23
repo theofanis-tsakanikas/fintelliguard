@@ -68,6 +68,13 @@ locals {
     # AnonymousAWSCredentials and got 403 (deploy run 29791999074).
     raw_bucket_name = try(local._aws_remote.raw_bucket_name, "raw-bucket-upstream-destroyed")
     raw_bucket_arn  = try(local._aws_remote.raw_bucket_arn, "arn:aws:s3:::raw-bucket-upstream-destroyed")
+
+    # The MSK IAM role and its instance profile (infra/aws). The instance profile lets a
+    # classic streaming cluster authenticate to MSK with IAM; the role ARN is what the
+    # cross-account role must be allowed to PassRole. Wrapped like every other upstream read
+    # so this layer stays plannable (and destroyable) after infra/aws is gone.
+    msk_access_role_arn             = try(local._aws_remote.msk_access_role_arn, "arn:aws:iam::000000000000:role/msk-upstream-destroyed")
+    msk_access_instance_profile_arn = try(local._aws_remote.msk_access_instance_profile_arn, "arn:aws:iam::000000000000:instance-profile/msk-upstream-destroyed")
   }
 
   workspace_name = coalesce(var.workspace_name, local.name)

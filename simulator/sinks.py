@@ -62,12 +62,32 @@ class KafkaSink(Sink):
         # Imported lazily so the package (and its tests) need no Kafka client installed.
         from confluent_kafka import Producer
 
-        return Producer(
-            {
-                "bootstrap.servers": kafka_config.bootstrap_servers,
-                "client.id": kafka_config.client_id,
-            }
-        )
+        conf: dict[str, Any] = {
+            "bootstrap.servers": kafka_config.bootstrap_servers,
+            "client.id": kafka_config.client_id,
+        }
+        # MSK IAM: SASL_SSL/OAUTHBEARER with a token signed at runtime from the task's IAM
+        # role (no stored secret). Absent for local PLAINTEXT, so the local funnel is untouched.
+        if kafka_config.uses_msk_iam:
+            conf["security.protocol"] = "SASL_SSL"
+            conf["sasl.mechanisms"] = "OAUTHBEARER"
+            conf["oauth_cb"] = KafkaSink._msk_iam_oauth_cb(kafka_config.region)
+
+        return Producer(conf)
+
+    @staticmethod
+    def _msk_iam_oauth_cb(region: str):
+        """confluent-kafka OAUTHBEARER callback returning a fresh AWS MSK IAM token."""
+
+        def _cb(_config: str):
+            # Lazy import: only the MSK path needs the signer, so local/tests never require it.
+            from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
+
+            token, expiry_ms = MSKAuthTokenProvider.generate_auth_token(region)
+            # librdkafka wants the absolute expiry in SECONDS since epoch.
+            return token, expiry_ms / 1000.0
+
+        return _cb
 
     def emit(self, record: dict[str, Any]) -> None:
         # Key by card_hash so a card's events keep order within a partition.

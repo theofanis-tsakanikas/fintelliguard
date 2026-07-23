@@ -1,0 +1,39 @@
+# Streaming bundle — the MSK connectivity probe, isolated in its own bundle on purpose.
+#
+# The probe is the network-stage gate: deploying it must not drag in the DLT pipeline, the
+# serving endpoints or the copilot (the main bundle). Kept apart, `databricks bundle deploy`
+# here touches only the probe job, so the streaming stage stays cheap to run and re-run while
+# verifying the private path — exactly the point of staging the deploy.
+#
+# BUILD + offline-validate only; deployed and run by the streaming stage of the deploy.
+
+bundle:
+  name: fintelliguard-streaming
+
+variables:
+  kafka_bootstrap:
+    description: >-
+      (deploy) MSK IAM SASL bootstrap brokers, resolved from the infra/aws
+      `msk_bootstrap_brokers_sasl_iam` output. The probe produces to and consumes from these.
+    default: ""
+  msk_instance_profile_arn:
+    description: >-
+      (deploy) Instance-profile ARN the probe cluster carries to authenticate to MSK with IAM,
+      resolved from the infra/aws `msk_access_instance_profile_arn` output.
+    default: ""
+
+# The probe script lives at the repo root (ml/serving/msk_probe.py) and imports
+# pipelines.runtime_config; both are synced so the driver can import them, like the main bundle.
+sync:
+  paths:
+    - .
+    - ../../../ml
+    - ../../../pipelines
+
+include:
+  - ./streaming_probe.yml
+
+targets:
+  dev:
+    mode: development
+    default: true

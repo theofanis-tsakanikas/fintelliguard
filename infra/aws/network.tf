@@ -148,6 +148,31 @@ resource "aws_security_group" "msk" {
     self            = true
   }
 
+  # The Databricks classic-compute data plane (same VPC) authenticates to the brokers
+  # with IAM SASL on 9098. Without this the Spark streaming consumer's TCP SYN to a
+  # broker is dropped at the MSK SG and the read hangs, then times out — a failure that
+  # looks like "no data" rather than "blocked", three layers from its cause. This is the
+  # one rule that turns co-located-in-the-VPC into actually-reachable.
+  ingress {
+    description     = "Kafka IAM SASL from the Databricks data plane"
+    from_port       = 9098
+    to_port         = 9098
+    protocol        = "tcp"
+    security_groups = [aws_security_group.databricks_data_plane.id]
+  }
+
+  # The in-VPC Fargate generator (the payment-gateway stand-in) produces to MSK over the same
+  # IAM SASL port. Its SG is always created (SGs are free); the brokers it reaches exist only
+  # when enable_msk = true. One-directional reference (the generator SG egresses by CIDR), so
+  # no dependency cycle between the two inline-rule security groups.
+  ingress {
+    description     = "Kafka IAM SASL from the Fargate generator"
+    from_port       = 9098
+    to_port         = 9098
+    protocol        = "tcp"
+    security_groups = [aws_security_group.generator.id]
+  }
+
   egress {
     description = "Inter-broker traffic within the VPC"
     from_port   = 0
@@ -220,6 +245,21 @@ resource "aws_security_group" "databricks_data_plane" {
     to_port     = 8451
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Egress to the MSK brokers on the IAM SASL port. The intra-SG rule above covers
+  # node-to-node, not the brokers (a different SG), so the streaming consumer needs an
+  # explicit lane out to 9098. Scoped to the VPC CIDR rather than the MSK SG on purpose:
+  # the MSK SG already references THIS SG for ingress, and a mutual SG reference between
+  # two inline-rule security groups is a Terraform dependency cycle. 9098 is served only
+  # by MSK inside this VPC, so a CIDR-scoped egress is equivalent in effect and breaks the
+  # cycle without a standalone-rule resource (which would conflict with these inline rules).
+  egress {
+    description = "Kafka IAM SASL to the in-VPC MSK brokers"
+    from_port   = 9098
+    to_port     = 9098
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
   }
 
   tags = { Name = "${local.name}-databricks-dataplane-sg" }

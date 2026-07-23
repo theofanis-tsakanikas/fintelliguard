@@ -84,6 +84,11 @@ output "msk_access_role_arn" {
   value       = aws_iam_role.msk_access.arn
 }
 
+output "msk_access_instance_profile_arn" {
+  description = "Instance-profile ARN for a Databricks classic cluster to authenticate to MSK with IAM."
+  value       = aws_iam_instance_profile.msk_access.arn
+}
+
 # ---- MSK (null unless enable_msk = true) -------------------------------------
 output "msk_cluster_arn" {
   description = "MSK cluster ARN, or null when enable_msk = false."
@@ -93,6 +98,27 @@ output "msk_cluster_arn" {
 output "msk_bootstrap_brokers_sasl_iam" {
   description = "MSK IAM SASL bootstrap brokers, or null when enable_msk = false."
   value       = one(aws_msk_cluster.this[*].bootstrap_brokers_sasl_iam)
+}
+
+# ---- Generator (null unless enable_msk = true) -------------------------------
+output "generator_ecr_repository_url" {
+  description = "ECR repo the Fargate generator image is pushed to, or null when enable_msk = false."
+  value       = one(aws_ecr_repository.generator[*].repository_url)
+}
+
+output "generator_ecs_cluster" {
+  description = "ECS cluster the generator task runs in, or null when enable_msk = false."
+  value       = one(aws_ecs_cluster.streaming[*].name)
+}
+
+output "generator_task_family" {
+  description = "Generator task-definition family (for `aws ecs run-task`), or null when enable_msk = false."
+  value       = one(aws_ecs_task_definition.generator[*].family)
+}
+
+output "generator_security_group_id" {
+  description = "Security group for the Fargate generator task."
+  value       = aws_security_group.generator.id
 }
 
 # ---- Context -----------------------------------------------------------------
