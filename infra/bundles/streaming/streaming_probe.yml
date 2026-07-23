@@ -4,9 +4,10 @@
 # anything expensive. If this job fails, the private path is not working and the stage stops
 # here — cheaply — instead of failing later inside the DLT pipeline as a silent "no data".
 #
-# The cluster carries the MSK instance profile (aws_attributes.instance_profile_arn) and the
-# AWS MSK IAM auth provider (the maven library); both are what let Spark's Kafka client speak
-# SASL_SSL/AWS_MSK_IAM to the brokers with no secret.
+# The cluster carries the MSK instance profile (aws_attributes.instance_profile_arn), and the
+# probe uses confluent_kafka (librdkafka, native) + the AWS MSK IAM SASL signer as PyPI
+# libraries — NOT the Spark Kafka connector, which dies on Databricks' shaded Kafka classes
+# (kafkashaded.*) when the IAM callback handler is loaded. Same client path as the simulator.
 
 resources:
   jobs:
@@ -23,6 +24,8 @@ resources:
               - ${var.kafka_bootstrap}
               - --topic
               - txn.probe
+              - --region
+              - ${var.region}
               - --timeout
               - "150"
 
@@ -44,7 +47,9 @@ resources:
               ResourceClass: SingleNode
 
           libraries:
-            # The AWS MSK IAM auth provider referenced by the SASL callback handler class. The
-            # Kafka connector itself ships with the Databricks runtime; only this is extra.
-            - maven:
-                coordinates: software.amazon.msk:aws-msk-iam-auth:2.2.0
+            # confluent_kafka bundles librdkafka (native), so it sidesteps the JVM shading
+            # entirely; the signer mints the IAM token from the cluster's instance profile.
+            - pypi:
+                package: confluent-kafka==2.6.0
+            - pypi:
+                package: aws-msk-iam-sasl-signer-python==1.0.1

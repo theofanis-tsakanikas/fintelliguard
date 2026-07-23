@@ -1,18 +1,24 @@
-"""Connectivity probe: does the Databricks classic cluster actually reach MSK, privately?
+"""Connectivity probe: does the Databricks cluster actually reach MSK, privately?
 
-This is the gate for the network stage — the thing that makes "terraform apply went green"
-into "the private path carries traffic". A green apply proves the resources exist; it does NOT
-prove a Spark cluster in the customer-managed VPC can open 9098 to a broker and authenticate
-with IAM. The security-group rule could be wrong, the instance profile could be unregistered,
-the PassRole could be missing — all of which apply cleanly and then fail at the first read,
-three layers downstream, as "no data". This probe moves that failure to where the reason is
-legible: it does a full Kafka round-trip and exits non-zero, loudly, if the path is down.
+This is the gate that turns "terraform apply went green" into "the private path carries
+traffic". A green apply proves the resources exist; it does NOT prove a cluster in the
+customer-managed VPC can open 9098 to a broker and authenticate with IAM. The SG rule could
+be wrong, the instance profile unregistered, the PassRole missing — all apply cleanly and then
+fail at the first read. This probe does a full Kafka round-trip and raises, loudly, if it can't.
 
-Runs as a Databricks Spark job task on a single-node cluster that carries the MSK instance
-profile (see infra/bundles/resources/streaming_probe.yml). Auth is the instance profile — no
-secret in code or args.
+Why NOT the Spark Kafka connector: on Databricks the Kafka classes are shaded as
+`kafkashaded.org.apache.kafka.*`, but the AWS `aws-msk-iam-auth` library's callback handler
+implements the UN-shaded `org.apache.kafka.common.security.auth.AuthenticateCallbackHandler`, so
+`spark.write.format("kafka")` with IAM dies at producer construction with NoClassDefFoundError —
+BEFORE any network I/O. This probe uses `confluent_kafka` (librdkafka, native — no JVM shading)
+with the AWS MSK IAM SASL signer, the SAME client path the simulator/consumer use, so it proves
+the real thing rather than crashing on a packaging mismatch.
 
-    spark-submit msk_probe.py --bootstrap <brokers> [--topic txn.probe] [--timeout 120]
+Runs as a Databricks job task on a single-node cluster that carries the MSK instance profile
+(see infra/bundles/streaming/streaming_probe.yml). Auth is the instance profile: the SASL token
+is signed at runtime from those credentials — no secret in code or args.
+
+    python msk_probe.py --bootstrap <brokers> [--topic txn.probe] [--region <r>] [--timeout 150]
 """
 
 from __future__ import annotations
@@ -21,92 +27,89 @@ import argparse
 import time
 import uuid
 
-# MSK IAM SASL reader/writer options. INLINED, not imported from pipelines.runtime_config: this
-# script runs as a bare Databricks spark_python_task whose sys.path does not include the synced
-# `pipelines` package (only a wheel would), so importing it fails with ModuleNotFoundError on
-# the cluster. A local parity test (tests/serving/test_msk_probe) asserts these stay identical
-# to runtime_config.kafka_source_options(SASL_SSL), so the probe still proves the SAME options
-# the DLT consumer uses — the guarantee just moves from runtime import to test time.
-_MSK_IAM_OPTIONS = {
-    "kafka.security.protocol": "SASL_SSL",
-    "kafka.sasl.mechanism": "AWS_MSK_IAM",
-    "kafka.sasl.jaas.config": "software.amazon.msk.auth.iam.IAMLoginModule required;",
-    "kafka.sasl.client.callback.handler.class": (
-        "software.amazon.msk.auth.iam.IAMClientCallbackHandler"
-    ),
-}
+
+def _oauth_cb(region: str):
+    """confluent_kafka OAUTHBEARER callback: a fresh AWS MSK IAM token from the task's role."""
+
+    def _cb(_config: str):
+        from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
+
+        token, expiry_ms = MSKAuthTokenProvider.generate_auth_token(region)
+        # librdkafka wants the absolute expiry in SECONDS since epoch.
+        return token, expiry_ms / 1000.0
+
+    return _cb
 
 
-def _spark():
-    from pyspark.sql import SparkSession
+def _sasl_conf(bootstrap: str, region: str) -> dict:
+    """Base SASL_SSL / AWS_MSK_IAM (OAUTHBEARER) client config shared by producer and consumer."""
+    return {
+        "bootstrap.servers": bootstrap,
+        "security.protocol": "SASL_SSL",
+        "sasl.mechanisms": "OAUTHBEARER",
+        "oauth_cb": _oauth_cb(region),
+    }
 
-    return SparkSession.builder.getOrCreate()
 
+def run_probe(bootstrap: str, topic: str, region: str, timeout_s: int) -> None:
+    """Produce one uniquely-marked record to MSK and read it back. Raise if it does not return."""
+    from confluent_kafka import Consumer, Producer
 
-def _iam_options() -> dict[str, str]:
-    """The SASL_SSL + AWS_MSK_IAM options the probe forces (see _MSK_IAM_OPTIONS)."""
-    return dict(_MSK_IAM_OPTIONS)
-
-
-def run_probe(bootstrap: str, topic: str, timeout_s: int) -> None:
-    """Write one uniquely-marked record to MSK and read it back. Raise if it does not return."""
-    spark = _spark()
     marker = f"msk-probe-{uuid.uuid4()}"
-    opts = _iam_options()
 
-    # 1) Produce — proves WriteData + Connect over the private path.
-    row = spark.createDataFrame([(marker,)], ["value"])
-    writer = row.selectExpr("CAST(value AS STRING) AS value").write.format("kafka")
-    writer = writer.option("kafka.bootstrap.servers", bootstrap).option("topic", topic)
-    for key, value in opts.items():
-        writer = writer.option(key, value)
-    writer.save()
+    # 1) Produce — proves Connect + WriteData over the private path with IAM auth.
+    producer = Producer(_sasl_conf(bootstrap, region))
+    producer.poll(0)  # prime the OAUTHBEARER token before the first metadata request
+    producer.produce(topic, value=marker.encode("utf-8"))
+    remaining = producer.flush(timeout_s)
+    if remaining:
+        raise RuntimeError(
+            f"[probe] FAIL — could not deliver {marker} to {topic} within {timeout_s}s. "
+            "The private path to MSK is not working: check the MSK SG ingress from the Databricks "
+            "data-plane SG (9098), the instance profile, and the cross-account PassRole."
+        )
     print(f"[probe] produced {marker} to {topic}")
 
-    # 2) Consume — proves ReadData + the round trip. Batch read from the earliest offset,
-    # retried until the marker shows up or the timeout expires (brokers settle asynchronously).
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        reader = spark.read.format("kafka")
-        reader = (
-            reader.option("kafka.bootstrap.servers", bootstrap)
-            .option("subscribe", topic)
-            .option("startingOffsets", "earliest")
-        )
-        for key, value in opts.items():
-            reader = reader.option(key, value)
-        found = (
-            reader.load()
-            .selectExpr("CAST(value AS STRING) AS value")
-            .where(f"value = '{marker}'")
-            .limit(1)
-            .count()
-        )
-        if found:
-            print(f"[probe] PASS — round-tripped {marker} over the private MSK path")
-            return
-        time.sleep(5)
+    # 2) Consume — proves ReadData + the round trip. Poll from the earliest offset until the
+    # marker shows up or the timeout expires (brokers settle asynchronously).
+    consumer = Consumer(
+        {
+            **_sasl_conf(bootstrap, region),
+            "group.id": f"probe-{marker}",
+            "auto.offset.reset": "earliest",
+        }
+    )
+    consumer.subscribe([topic])
+    try:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            msg = consumer.poll(5.0)
+            if msg is None or msg.error():
+                continue
+            value = msg.value()
+            if value is not None and value.decode("utf-8") == marker:
+                print(f"[probe] PASS — round-tripped {marker} over the private MSK path")
+                return
+    finally:
+        consumer.close()
 
-    # RuntimeError, not SystemExit/sys.exit: inside the Databricks job host SystemExit is
-    # reported as INTERNAL_ERROR (even for 0), swallowing the reason. A normal exception fails
-    # the task cleanly with this message. See tests/bundles test_a_task_script_never_calls_sys_exit.
     raise RuntimeError(
         f"[probe] FAIL — produced {marker} but could not read it back within {timeout_s}s. "
-        "The private path to MSK is not working: check the MSK SG ingress from the Databricks "
-        "data-plane SG (9098), the registered instance profile, and the cross-account PassRole."
+        "The brokers were reachable for the write; the read did not return the record in time."
     )
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description="Probe the private Databricks→MSK path.")
+    ap = argparse.ArgumentParser(description="Probe the private Databricks->MSK path.")
     ap.add_argument("--bootstrap", required=True, help="MSK IAM SASL bootstrap brokers")
     ap.add_argument("--topic", default="txn.probe")
-    ap.add_argument("--timeout", type=int, default=120)
+    ap.add_argument("--region", default="eu-central-1")
+    ap.add_argument("--timeout", type=int, default=150)
     args = ap.parse_args(argv)
-    run_probe(args.bootstrap, args.topic, args.timeout)
+    run_probe(args.bootstrap, args.topic, args.region, args.timeout)
 
 
-# No sys.exit wrapper: on success the task must finish normally, and on failure run_probe
-# raises — SystemExit here would report even a clean run as INTERNAL_ERROR in the job host.
+# No sys.exit wrapper: on success the task finishes normally, and on failure run_probe raises —
+# SystemExit here would report even a clean run as INTERNAL_ERROR in the Databricks job host.
 if __name__ == "__main__":
     main()

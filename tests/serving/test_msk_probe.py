@@ -1,9 +1,9 @@
-"""The MSK probe forces the SASL_SSL/AWS_MSK_IAM path and proves the SAME options the pipeline uses.
+"""The MSK probe uses the confluent_kafka client path (not the Spark connector) with IAM.
 
-The probe's whole job is to test the SAME options the DLT consumer uses — a probe that passed
-on a look-alike config while the pipeline failed would be worse than none. The probe INLINES
-those options (it runs as a bare spark_python_task where `pipelines` is not importable), so the
-parity is enforced here instead: these must equal runtime_config.kafka_source_options(SASL_SSL).
+The Spark Kafka connector dies on Databricks' shaded Kafka classes when the AWS IAM callback
+handler loads; the probe therefore uses confluent_kafka (native librdkafka) + the AWS MSK IAM
+signer, the SAME client path the simulator's producer uses. These pin that it builds the
+SASL_SSL/OAUTHBEARER config with a token callback, and that it demands a bootstrap target.
 """
 
 from __future__ import annotations
@@ -13,23 +13,46 @@ import pytest
 from ml.serving import msk_probe
 
 
-def test_probe_forces_the_aws_msk_iam_sasl_options():
-    opts = msk_probe._iam_options()
-    assert opts["kafka.security.protocol"] == "SASL_SSL"
-    assert opts["kafka.sasl.mechanism"] == "AWS_MSK_IAM"
-    assert "IAMClientCallbackHandler" in opts["kafka.sasl.client.callback.handler.class"]
+def test_sasl_conf_is_sasl_ssl_oauthbearer_with_a_token_callback():
+    conf = msk_probe._sasl_conf("b-1:9098,b-2:9098", "eu-central-1")
+    assert conf["bootstrap.servers"] == "b-1:9098,b-2:9098"
+    assert conf["security.protocol"] == "SASL_SSL"
+    assert conf["sasl.mechanisms"] == "OAUTHBEARER"
+    # The callback signs a fresh AWS MSK IAM token at runtime — no stored secret.
+    assert callable(conf["oauth_cb"])
 
 
-def test_probe_options_match_the_pipeline_consumer_exactly():
-    """The inlined probe options must not drift from the DLT consumer's — parity at test time."""
-    from pipelines.runtime_config import kafka_source_options
+def test_sasl_conf_matches_the_simulator_producer_path():
+    """Probe and simulator must authenticate to MSK the same way, or the probe proves nothing."""
+    from simulator.config import KafkaConfig
+    from simulator.sinks import KafkaSink
 
-    class _Sasl:
-        conf = type(
-            "c", (), {"get": staticmethod(lambda k, d="": "SASL_SSL" if "protocol" in k else d)}
+    captured: dict = {}
+
+    class _P:
+        def __init__(self, c):
+            captured.update(c)
+
+    import sys
+    import types as _t
+
+    fake = _t.ModuleType("confluent_kafka")
+    fake.Producer = _P
+    sys.modules["confluent_kafka"] = fake
+    try:
+        KafkaSink._build_producer(
+            KafkaConfig(
+                bootstrap_servers="b:9098",
+                security_protocol="SASL_SSL",
+                sasl_mechanism="OAUTHBEARER",
+            )
         )
+    finally:
+        sys.modules.pop("confluent_kafka", None)
 
-    assert msk_probe._iam_options() == kafka_source_options(_Sasl())
+    probe = msk_probe._sasl_conf("b:9098", "eu-central-1")
+    assert probe["security.protocol"] == captured["security.protocol"] == "SASL_SSL"
+    assert probe["sasl.mechanisms"] == captured["sasl.mechanisms"] == "OAUTHBEARER"
 
 
 def test_probe_requires_a_bootstrap_target():

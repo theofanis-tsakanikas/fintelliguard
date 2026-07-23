@@ -21,6 +21,9 @@ variables:
       (deploy) Instance-profile ARN the probe cluster carries to authenticate to MSK with IAM,
       resolved from the infra/aws `msk_access_instance_profile_arn` output.
     default: ""
+  region:
+    description: AWS region the MSK IAM SASL token is signed for.
+    default: eu-central-1
 
 # The probe script lives at the repo root (ml/serving/msk_probe.py) and imports
 # pipelines.runtime_config; both are synced so the driver can import them, like the main bundle.
