@@ -19,13 +19,22 @@ from __future__ import annotations
 
 import argparse
 import time
-import types
 import uuid
 
-# MSK IAM SASL wiring — identical to the DLT consumer's, kept in one place there
-# (pipelines/runtime_config.kafka_source_options). Imported so the probe proves the SAME
-# options the pipeline will use, not a look-alike that could pass while the pipeline fails.
-from pipelines.runtime_config import kafka_source_options
+# MSK IAM SASL reader/writer options. INLINED, not imported from pipelines.runtime_config: this
+# script runs as a bare Databricks spark_python_task whose sys.path does not include the synced
+# `pipelines` package (only a wheel would), so importing it fails with ModuleNotFoundError on
+# the cluster. A local parity test (tests/serving/test_msk_probe) asserts these stay identical
+# to runtime_config.kafka_source_options(SASL_SSL), so the probe still proves the SAME options
+# the DLT consumer uses — the guarantee just moves from runtime import to test time.
+_MSK_IAM_OPTIONS = {
+    "kafka.security.protocol": "SASL_SSL",
+    "kafka.sasl.mechanism": "AWS_MSK_IAM",
+    "kafka.sasl.jaas.config": "software.amazon.msk.auth.iam.IAMLoginModule required;",
+    "kafka.sasl.client.callback.handler.class": (
+        "software.amazon.msk.auth.iam.IAMClientCallbackHandler"
+    ),
+}
 
 
 def _spark():
@@ -35,20 +44,8 @@ def _spark():
 
 
 def _iam_options() -> dict[str, str]:
-    """The SASL_SSL + AWS_MSK_IAM options, taken from the pipeline's own helper.
-
-    kafka_source_options reads `fintelliguard.kafka_security_protocol` off Spark conf; the probe
-    hands it a stub that forces SASL_SSL, so it always exercises the MSK path — and proves the
-    exact options the DLT consumer uses, not a look-alike.
-    """
-    forced = types.SimpleNamespace(
-        conf=types.SimpleNamespace(
-            get=lambda key, default="": (
-                "SASL_SSL" if key.endswith("kafka_security_protocol") else default
-            )
-        )
-    )
-    return kafka_source_options(forced)
+    """The SASL_SSL + AWS_MSK_IAM options the probe forces (see _MSK_IAM_OPTIONS)."""
+    return dict(_MSK_IAM_OPTIONS)
 
 
 def run_probe(bootstrap: str, topic: str, timeout_s: int) -> None:
