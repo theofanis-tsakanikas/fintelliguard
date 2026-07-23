@@ -85,12 +85,21 @@ resource "aws_iam_role_policy" "lambda_inline" {
 # ---- (b) MSK access role: producers/consumers using IAM SASL auth -------------
 # Assumable by EC2/ECS workloads (simulator, Spark consumers). Scoped to this
 # cluster's resources via kafka-cluster ARNs (built in locals from account/region).
+#
+# BOTH principals, and the second one is not decoration:
+#   ec2        — the role is wrapped in an instance profile that Databricks classic clusters
+#                carry, which is how the Spark/probe side authenticates to MSK with IAM.
+#   ecs-tasks  — the same role is the task_role for the in-VPC generator and scorer. Fargate
+#                assumes it as `ecs-tasks.amazonaws.com`, and with only `ec2` in the trust
+#                RunTask fails outright: "ECS was unable to assume the role ... verify that
+#                the role being passed has the proper trust relationship". The comment above
+#                claimed EC2/ECS from the start; the trust policy only ever said EC2.
 data "aws_iam_policy_document" "msk_assume" {
   statement {
     actions = ["sts:AssumeRole"]
     principals {
       type        = "Service"
-      identifiers = ["ec2.${local.dns_suffix}"]
+      identifiers = ["ec2.${local.dns_suffix}", "ecs-tasks.${local.dns_suffix}"]
     }
   }
 }

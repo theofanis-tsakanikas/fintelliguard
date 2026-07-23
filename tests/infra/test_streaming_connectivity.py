@@ -73,6 +73,34 @@ def test_an_instance_profile_wraps_the_msk_iam_role():
     assert any("msk_access" in str(body.get("role", "")) for body in profiles)
 
 
+def test_the_msk_role_is_assumable_by_both_ec2_and_ecs_tasks():
+    """One role serves two callers, and each needs its own principal in the trust policy.
+
+    ec2 is how a Databricks classic cluster carries it (instance profile); ecs-tasks is how the
+    in-VPC generator/scorer Fargate tasks assume it. With ecs-tasks missing, RunTask fails with
+    "ECS was unable to assume the role ... proper trust relationship" — which is exactly what
+    happened, because the comment said EC2/ECS while the policy only said EC2.
+    """
+    aws_iam = _AWS_STREAMING.parent / "iam.tf"
+    with open(aws_iam, encoding="utf-8") as handle:
+        doc = hcl2.load(handle)
+    trust = [
+        body
+        for block in doc.get("data", [])
+        for name, body in block.get("aws_iam_policy_document", {}).items()
+        if name == "msk_assume"
+    ]
+    assert trust, "data.aws_iam_policy_document.msk_assume not found"
+    principals = str(trust[0])
+    assert "ec2." in principals, (
+        "the MSK role is not assumable by EC2 (Databricks instance profile)"
+    )
+    assert "ecs-tasks." in principals, (
+        "the MSK role is not assumable by ecs-tasks — the generator/scorer Fargate tasks "
+        "cannot start (RunTask: 'unable to assume the role')"
+    )
+
+
 def test_cross_account_may_pass_the_role_and_the_profile_is_registered():
     passes = _resources(_DBX_STREAMING, "aws_iam_role_policy", "cross_account_pass_msk")
     assert passes, (
