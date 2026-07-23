@@ -53,33 +53,38 @@ def _sasl_conf(bootstrap: str, region: str) -> dict:
 
 def run_probe(bootstrap: str, topic: str, region: str, timeout_s: int) -> None:
     """Produce one uniquely-marked record to MSK and read it back. Raise if it does not return."""
-    from confluent_kafka import Consumer, Producer
+    from confluent_kafka import Consumer, Producer, TopicPartition
 
     marker = f"msk-probe-{uuid.uuid4()}"
 
-    # 1) Produce — proves Connect + WriteData over the private path with IAM auth.
+    # 1) Produce — proves Connect + WriteData over the private path with IAM auth. The delivery
+    # report gives the EXACT partition+offset the record landed at, which the read then targets.
+    delivered: dict[str, int] = {}
+
+    def _on_delivery(err, msg):
+        if err is None:
+            delivered["partition"] = msg.partition()
+            delivered["offset"] = msg.offset()
+
     producer = Producer(_sasl_conf(bootstrap, region))
     producer.poll(0)  # prime the OAUTHBEARER token before the first metadata request
-    producer.produce(topic, value=marker.encode("utf-8"))
+    producer.produce(topic, value=marker.encode("utf-8"), on_delivery=_on_delivery)
     remaining = producer.flush(timeout_s)
-    if remaining:
+    if remaining or "offset" not in delivered:
         raise RuntimeError(
             f"[probe] FAIL — could not deliver {marker} to {topic} within {timeout_s}s. "
             "The private path to MSK is not working: check the MSK SG ingress from the Databricks "
             "data-plane SG (9098), the instance profile, and the cross-account PassRole."
         )
-    print(f"[probe] produced {marker} to {topic}")
-
-    # 2) Consume — proves ReadData + the round trip. Poll from the earliest offset until the
-    # marker shows up or the timeout expires (brokers settle asynchronously).
-    consumer = Consumer(
-        {
-            **_sasl_conf(bootstrap, region),
-            "group.id": f"probe-{marker}",
-            "auto.offset.reset": "earliest",
-        }
+    print(
+        f"[probe] produced {marker} to {topic} @ p{delivered['partition']}/o{delivered['offset']}"
     )
-    consumer.subscribe([topic])
+
+    # 2) Consume — proves ReadData + the round trip. ASSIGN the exact (partition, offset) the
+    # write landed at, rather than subscribe(): no consumer group to coordinate or authorize
+    # (only kafka-cluster:ReadData is needed), and no rebalance/offset-reset timing to wait on.
+    consumer = Consumer({**_sasl_conf(bootstrap, region), "group.id": f"probe-{marker}"})
+    consumer.assign([TopicPartition(topic, delivered["partition"], delivered["offset"])])
     try:
         deadline = time.time() + timeout_s
         while time.time() < deadline:
