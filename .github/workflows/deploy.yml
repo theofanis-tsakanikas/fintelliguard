@@ -49,6 +49,20 @@ on:
         type: choice
         options: [auto, force]
         default: auto
+      # The staged deploy: run the whole thing, or one stage on its own. `all` reproduces the
+      # ORIGINAL behaviour EXACTLY — every stage predicate below is true when stage is `all`, so
+      # each step keeps its old condition unchanged. The single stages let you run the cheap-to-
+      # verify part (network) on its own, or re-run serving/streaming without re-applying infra.
+      #
+      # Dependency order is network -> train -> serving; a single stage assumes the stages
+      # before it already ran (the estate exists). `streaming` is DELIBERATELY not part of `all`:
+      # `all` is exactly the proven deploy, and the private streaming path is an explicit,
+      # separately-run stage (prove it, record, then destroy — MSK bills while it stands).
+      stage:
+        description: "all = the full deploy (unchanged). network = infra only (VPC/MSK/workspace/UC + the private connection). train = data + model. serving = the endpoints + cross-cloud wiring. streaming = deploy & run the MSK probe (prove the private path); run AFTER network/all."
+        type: choice
+        options: [all, network, train, serving, streaming]
+        default: all
 
 permissions:
   contents: read
@@ -121,7 +135,7 @@ jobs:
           if-no-files-found: error
 
   apply:
-    name: Apply, layer by layer (${{ inputs.environment }})
+    name: Apply — stage ${{ inputs.stage }} (${{ inputs.environment }})
     needs: plan
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }} # the approval gate — the plan text is the artifact
@@ -172,6 +186,7 @@ jobs:
       # THIS project and environment's prefix, and only ones already scheduled for deletion.
       # A live secret has no DeletedDate and is never touched.
       - name: Purge secrets left pending deletion by a previous teardown
+        if: ${{ inputs.stage == 'all' || inputs.stage == 'network' }}
         env:
           PREFIX: fintelliguard/${{ inputs.environment }}/
         run: |
@@ -190,6 +205,7 @@ jobs:
           done
 
       - name: Apply every layer, in dependency order
+        if: ${{ inputs.stage == 'all' || inputs.stage == 'network' }}
         env:
           TF_VAR_databricks_account_id: ${{ secrets.DATABRICKS_ACCOUNT_ID }}
           TF_VAR_databricks_client_id: ${{ secrets.DATABRICKS_CLIENT_ID }}
@@ -214,6 +230,18 @@ jobs:
             echo "::endgroup::"
           done
 
+      # A single downstream stage (train / serving / streaming) does NOT apply infra — it reads
+      # the estate the network stage already built. But this is a fresh runner, so the layers
+      # must be `terraform init`-ed before any `terraform output` can read their remote state.
+      # Skipped for all/network, where the apply step above already initialised them.
+      - name: Init the Terraform layers for output reads (single downstream stage)
+        if: ${{ inputs.stage == 'train' || inputs.stage == 'serving' || inputs.stage == 'streaming' }}
+        run: |
+          set -euo pipefail
+          for dir in infra/aws infra/databricks; do
+            terraform -chdir="${dir}" init -input=false -lockfile=readonly >/dev/null
+          done
+
       # Bedrock creates the Knowledge Base, the bucket and the data source — and leaves all
       # three EMPTY. Terraform has no resource for "the documents", so without this step a
       # deploy finishes with the KB `ACTIVE` and zero objects in it, which is precisely what
@@ -230,8 +258,9 @@ jobs:
       # Ids come from the layer that owns them, never pasted.
       - name: Load the regulatory corpus into the Knowledge Base (screened)
         # Only `full` deploys the Bedrock layer; in `core` there is no KB to load, and the
-        # `terraform output` reads below would fail on outputs that were never created.
-        if: inputs.layers == 'full'
+        # `terraform output` reads below would fail on outputs that were never created. Part of
+        # the network stage — it loads the Tier-2 infra's corpus right after that layer applies.
+        if: ${{ inputs.layers == 'full' && (inputs.stage == 'all' || inputs.stage == 'network') }}
         run: |
           set -euo pipefail
           cd agents/bedrock/terraform
@@ -250,6 +279,9 @@ jobs:
       # value nothing kept in sync with the workspace actually deployed. Read it from the
       # layer that creates it.
       - name: Resolve the workspace host from layer 2's output
+        # Every Databricks stage needs the host; only pure `network` does not. Init for the
+        # single downstream stages was done above; for all/network the apply step did it.
+        if: ${{ inputs.stage != 'network' }}
         run: |
           set -euo pipefail
           host="$(terraform -chdir=infra/databricks output -raw workspace_url)"
@@ -267,6 +299,7 @@ jobs:
       # serving never pairs new features with an old model. `force` retrains unconditionally.
       - name: Decide whether the fraud scorer needs (re)training
         id: traincheck
+        if: ${{ inputs.stage == 'all' || inputs.stage == 'train' }}
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
@@ -303,6 +336,7 @@ jobs:
       # index", so the ordering lives here: seed the table, THEN deploy the bundle that
       # indexes it.
       - name: 4a) Seed gold.resolved_cases (prerequisite for the case index)
+        if: ${{ inputs.stage == 'all' || inputs.stage == 'train' }}
         working-directory: infra/bundles/prereq
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
@@ -321,6 +355,7 @@ jobs:
       # which reads like a naming or permissions problem and is neither. Polling for ONLINE
       # is the ordering DAB cannot express, in the only place that can express it.
       - name: 4a-ii) Wait for the Vector Search endpoint to be ONLINE
+        if: ${{ inputs.stage == 'all' || inputs.stage == 'train' }}
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
@@ -356,6 +391,7 @@ jobs:
       # in eu-central-1. Checking first turns it into a direct statement, and lists what IS
       # available so the fix does not need a trip to the console.
       - name: 4a-iii) Verify the embedding endpoint the case index needs
+        if: ${{ inputs.stage == 'all' || inputs.stage == 'train' }}
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
@@ -383,6 +419,7 @@ jobs:
           exit 1
 
       - name: 4b) infra/bundles (Databricks Asset Bundles)
+        if: ${{ inputs.stage == 'all' || inputs.stage == 'train' }}
         working-directory: infra/bundles
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
@@ -464,6 +501,7 @@ jobs:
         run: databricks bundle run -t ${{ inputs.environment }} train_fraud_scorer
 
       - name: 8) Serving endpoints, pinned to the version the gate promoted
+        if: ${{ inputs.stage == 'all' || inputs.stage == 'serving' }}
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
@@ -491,7 +529,7 @@ jobs:
       # job start (or before step 5) may have expired. Gated on `full`, not on training, so it
       # always precedes step 9 in a full deploy.
       - name: Refresh AWS credentials before the cross-cloud wiring
-        if: inputs.layers == 'full'
+        if: ${{ inputs.layers == 'full' && (inputs.stage == 'all' || inputs.stage == 'serving') }}
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-region: ${{ env.AWS_REGION }}
@@ -505,7 +543,7 @@ jobs:
       # service principal's OAuth credentials the Lambda exchanges for a workspace token. Only
       # `full` deploys the Bedrock layer, so this is scoped to it.
       - name: 9) Wire the Tier-2 cross-cloud contract (Bedrock -> Mosaic)
-        if: inputs.layers == 'full'
+        if: ${{ inputs.layers == 'full' && (inputs.stage == 'all' || inputs.stage == 'serving') }}
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
@@ -557,6 +595,7 @@ jobs:
       # already present. Demo transactions come from the repo (parity-tested against the Tier-2
       # store), so no AWS creds are needed here.
       - name: 10) Register and serve the Tier-3 copilot (best-effort)
+        if: ${{ inputs.stage == 'all' || inputs.stage == 'serving' }}
         continue-on-error: true
         env:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
@@ -593,9 +632,57 @@ jobs:
       # not fail the deploy — the cross-cloud contract is gated by the Lambda tests + a live
       # Lambda invocation. Only `full` deploys the Bedrock agent.
       - name: 11) Smoke-test the Tier-2 agent (best-effort)
-        if: inputs.layers == 'full'
+        if: ${{ inputs.layers == 'full' && (inputs.stage == 'all' || inputs.stage == 'serving') }}
         continue-on-error: true
         run: |
           set -uo pipefail
           python -m pip install --quiet boto3
           python agents/bedrock/smoke_agent.py --region "${AWS_REGION}"
+
+      # ---- Stage: streaming — the private MSK ↔ Databricks path -----------------------------
+      #
+      # DELIBERATELY not part of `all`: `all` is the proven deploy, and MSK bills per broker-hour
+      # while it stands. Run this stage on its own AFTER network/all, prove the private path,
+      # record, then destroy. It assumes the network stage already applied (MSK, the SG opening,
+      # the instance profile, the ECR repo all exist). enable_msk is already true in dev, so the
+      # network apply stood MSK up; here we only build the producer image and PROVE the path.
+
+      # The Fargate generator (the in-VPC payment-gateway stand-in) runs THIS image. Pushed to the
+      # ECR repo the network stage created; the task definition references :latest.
+      - name: streaming) Build & push the in-VPC generator image
+        if: ${{ inputs.stage == 'streaming' }}
+        run: |
+          set -euo pipefail
+          repo="$(terraform -chdir=infra/aws output -raw generator_ecr_repository_url)"
+          if [ -z "${repo}" ] || [ "${repo}" = "null" ]; then
+            echo "::error::no generator ECR repo — run the network stage first (enable_msk=true)"
+            exit 1
+          fi
+          registry="${repo%%/*}"
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${registry}"
+          docker build -f deploy/streaming/Dockerfile -t "${repo}:latest" .
+          docker push "${repo}:latest"
+
+      # The proof: deploy ONLY the isolated streaming bundle (the probe job) and run it. It does a
+      # full Kafka round-trip from a classic cluster carrying the MSK instance profile, and exits
+      # non-zero — failing THIS step, loudly, with the reason — if the private path is down. Its
+      # inputs come from the layers that own them, never pasted.
+      - name: streaming) Deploy & run the MSK connectivity probe (proves the private path)
+        if: ${{ inputs.stage == 'streaming' }}
+        working-directory: infra/bundles/streaming
+        env:
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          boot="$(terraform -chdir=../../../infra/aws output -raw msk_bootstrap_brokers_sasl_iam)"
+          ip_arn="$(terraform -chdir=../../../infra/aws output -raw msk_access_instance_profile_arn)"
+          if [ -z "${boot}" ] || [ "${boot}" = "null" ]; then
+            echo "::error::MSK has no bootstrap brokers — run the network stage first (enable_msk=true)"
+            exit 1
+          fi
+          databricks bundle deploy -t ${{ inputs.environment }} \
+            --var="kafka_bootstrap=${boot}" \
+            --var="msk_instance_profile_arn=${ip_arn}"
+          databricks bundle run -t ${{ inputs.environment }} msk_probe

@@ -180,6 +180,41 @@ jobs:
       # teardown sat halted. That reasoning was right about the cost and wrong about the
       # scope: leaving MSK running for the minutes it takes to fix a failed layer is
       # recoverable, and the summary step makes it loud. Wedging a layer is not.
+      # The streaming generator is a demo DRIVER the operator starts by hand (`aws ecs
+      # run-task`) and the simulator runs unbounded, so it may still be RUNNING at teardown. A
+      # live Fargate task holds an ENI in a private subnet with the generator SG attached, and
+      # AWS will not delete a security group, subnet or ECS cluster while an ENI uses them — so
+      # one forgotten task would block the ENTIRE infra/aws destroy and leave MSK + VPC + NAT
+      # billing. Stop it first. Best-effort and idempotent: no cluster / no task is success, and
+      # a failure here must not abort the teardown it is trying to unblock.
+      - name: 3b) Stop any running generator task (frees the ENI for the infra/aws destroy)
+        if: >-
+          always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'
+          && steps.bedrock.outcome == 'success' && steps.databricks.outcome == 'success'
+        run: |
+          set -uo pipefail
+          cluster="fintelliguard-${{ inputs.environment }}-streaming"
+          status="$(aws ecs describe-clusters --clusters "${cluster}" \
+            --query 'clusters[0].status' --output text 2>/dev/null || echo NONE)"
+          if [ "${status}" != "ACTIVE" ]; then
+            echo "no active streaming cluster (${status}) — nothing to stop."
+            exit 0
+          fi
+          tasks="$(aws ecs list-tasks --cluster "${cluster}" --desired-status RUNNING \
+            --query 'taskArns' --output text 2>/dev/null || true)"
+          if [ -z "${tasks}" ] || [ "${tasks}" = "None" ]; then
+            echo "no running generator tasks."
+            exit 0
+          fi
+          for t in ${tasks}; do
+            echo "stopping generator task ${t}"
+            aws ecs stop-task --cluster "${cluster}" --task "${t}" >/dev/null || true
+          done
+          # Wait for the task to stop, then a short pause for ECS to deprovision the ENI before
+          # infra/aws tries to delete the SG/subnet it was attached to.
+          aws ecs wait tasks-stopped --cluster "${cluster}" --tasks ${tasks} || true
+          sleep 30
+
       - name: 4a) Empty the buckets infra/aws owns
         if: >-
           always() && steps.guard.outcome == 'success' && steps.creds.outcome == 'success'

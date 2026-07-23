@@ -169,14 +169,17 @@ def test_deploy_defaults_to_core_so_aoss_is_not_billed_during_tier1_work():
     assert layers_input["default"] == "core", "deploy no longer defaults to the cheap path"
     assert set(layers_input["options"]) == {"core", "full"}
 
-    # The corpus load reads Bedrock terraform outputs, so it must be gated to `full` — in
-    # core those outputs were never created and the step would fail on them.
+    # The corpus load reads Bedrock terraform outputs, so `layers == 'full'` must be a REQUIRED
+    # conjunct of its condition — in core those outputs were never created and the step would
+    # fail on them. The staged deploy ANDs a stage predicate onto it (it belongs to the network
+    # stage), so the check is "full is the leading conjunct", not an exact string.
     corpus = next(
         s for s in doc["jobs"]["apply"]["steps"] if "regulatory corpus" in s.get("name", "").lower()
     )
-    assert corpus.get("if") == "inputs.layers == 'full'", (
-        "the corpus load runs in core, where the Knowledge Base it targets does not exist"
-    )
+    corpus_if = (corpus.get("if") or "").replace("${{", "").replace("}}", "").strip()
+    assert corpus_if == "inputs.layers == 'full'" or corpus_if.startswith(
+        "inputs.layers == 'full' &&"
+    ), "the corpus load is not gated to `full` — it would run in core, where the KB does not exist"
 
 
 def test_deploy_trains_once_and_reuses_the_model_by_content_fingerprint():
