@@ -46,7 +46,7 @@ resource "aws_iam_instance_profile" "msk_access" {
 # rather than the MSK SG, for the same no-cycle reason as the data-plane SG.
 resource "aws_security_group" "generator" {
   name        = "${local.name}-generator"
-  description = "In-VPC Fargate transaction generator -> MSK (IAM SASL)"
+  description = "In-VPC Fargate transaction generator to MSK (IAM SASL)"
   vpc_id      = aws_vpc.main.id
 
   egress {
