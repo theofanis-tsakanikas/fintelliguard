@@ -463,3 +463,48 @@ def test_a_flagged_transaction_uses_the_injected_verdict_builder():
     # Escalation is automatic on a flagged score — the injected reasoner was used, no prompt.
     assert calls == ["block"]
     assert "verdict_accepted" in result
+
+
+# --------------------------------------------------------------------------- #
+# MSK IAM warm-up: poll BEFORE asking for metadata, and survive the raise
+# --------------------------------------------------------------------------- #
+def test_warm_msk_client_polls_first_and_tolerates_the_transport_raise():
+    """`list_topics` RAISES while the SASL handshake is in flight — it does not return empty.
+
+    Calling it in a loop condition (the first version did) crashed the scorer on its very first
+    iteration with KafkaException(_TRANSPORT) instead of retrying. The warm-up must poll first
+    (that is what serves the OAUTHBEARER token) and swallow the raise until metadata arrives.
+    """
+    from ml.serving.stream_service import warm_msk_client
+
+    calls = {"poll": 0, "list": 0}
+
+    class _Meta:
+        brokers = {0: object()}
+
+    class _Client:
+        def poll(self, _timeout):
+            calls["poll"] += 1
+
+        def list_topics(self, timeout=None):
+            calls["list"] += 1
+            if calls["list"] < 3:  # handshake still in flight
+                raise RuntimeError("KafkaError{code=_TRANSPORT}")
+            return _Meta()
+
+    assert warm_msk_client(_Client(), timeout_s=10) is True
+    assert calls["poll"] >= calls["list"], "must poll before each metadata check (serves the token)"
+    assert calls["list"] >= 3, "must keep retrying past the transport raises"
+
+
+def test_warm_msk_client_gives_up_at_the_deadline_instead_of_hanging():
+    from ml.serving.stream_service import warm_msk_client
+
+    class _NeverReady:
+        def poll(self, _timeout):
+            pass
+
+        def list_topics(self, timeout=None):
+            raise RuntimeError("KafkaError{code=_TRANSPORT}")
+
+    assert warm_msk_client(_NeverReady(), timeout_s=1) is False

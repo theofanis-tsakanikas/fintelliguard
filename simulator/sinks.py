@@ -91,8 +91,11 @@ class KafkaSink(Sink):
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             producer.poll(0.5)
-            if producer.list_topics(timeout=5).brokers:
-                return
+            try:
+                if producer.list_topics(timeout=5).brokers:
+                    return
+            except Exception:  # noqa: BLE001 - list_topics RAISES _TRANSPORT while the
+                continue  # handshake is still in flight; keep polling to serve the token
 
     @staticmethod
     def _msk_iam_oauth_cb(region: str):

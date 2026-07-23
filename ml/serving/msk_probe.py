@@ -62,8 +62,11 @@ def _warm(client, timeout_s: int) -> None:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         client.poll(0.5)
-        if client.list_topics(timeout=5).brokers:
-            return
+        try:
+            if client.list_topics(timeout=5).brokers:
+                return
+        except Exception:  # noqa: BLE001 - list_topics RAISES _TRANSPORT while the handshake
+            continue  # is still in flight; keep polling to serve the token
     raise RuntimeError(
         f"[probe] FAIL — could not establish an authenticated session to MSK within {timeout_s}s. "
         "Check the MSK SG ingress from the Databricks data-plane SG (9098), the instance profile, "

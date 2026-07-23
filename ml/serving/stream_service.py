@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
@@ -312,6 +313,32 @@ def process_transaction(
     return result
 
 
+def warm_msk_client(client, timeout_s: int = 30) -> bool:
+    """Poll an MSK IAM client until its OAUTHBEARER token is served and the brokers answer.
+
+    Two things this must get right, both learned from a live failure:
+
+      * POLL FIRST. The token is delivered through `oauth_cb`, which is only served during
+        poll(); asking for metadata before polling races ahead of the token and the connection
+        fails with _TRANSPORT.
+      * TOLERATE THE RAISE. `list_topics` does not return "no brokers yet" while the handshake
+        is still in flight — it RAISES KafkaException(_TRANSPORT). Calling it in a loop
+        CONDITION (as this first did) therefore crashed the scorer on its very first iteration
+        instead of retrying. Swallow it and keep polling until the deadline.
+
+    Returns True once metadata is available, False if the deadline passes.
+    """
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        client.poll(0.5)
+        try:
+            if client.list_topics(timeout=5).brokers:
+                return True
+        except Exception:  # noqa: BLE001 - handshake still in flight; keep polling
+            continue
+    return False
+
+
 def _consumer_conf(
     bootstrap_servers: str, security_protocol: str, sasl_mechanism: str, region: str
 ) -> dict:
@@ -376,11 +403,7 @@ def run(
     # subscribing. Without this the first poll races ahead of the IAM token and the connection
     # fails with _TRANSPORT (the same fix as the producer and the probe). No-op for PLAINTEXT.
     if security_protocol.upper() == "SASL_SSL":
-        import time as _time
-
-        _deadline = _time.time() + 30
-        while _time.time() < _deadline and not consumer.list_topics(timeout=5).brokers:
-            consumer.poll(0.5)
+        warm_msk_client(consumer)
     consumer.subscribe([topic])
     logger.info(
         "scorer consuming %r from %s; /metrics on :%d", topic, bootstrap_servers, metrics_port
