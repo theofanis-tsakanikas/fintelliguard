@@ -188,12 +188,23 @@ Only the flagged ~1% reach it. The agent `fintelliguard-dev-fraud-investigator` 
 **Knowledge Base of verbatim EUR-Lex regulation** (AMLD5, GDPR, PSD2, RTS-SCA), and every
 verdict passes an output **Guardrail**.
 
+<p align="center">
+  <img src="docs/assets/bedrock_test.png" width="100%" alt="Bedrock agent verdict — reasoning grounded in AML/PSD2, recommended_action review">
+</p>
+
+The regulatory corpus lives in S3, is indexed into the Knowledge Base, and every verdict is
+grounded in it — cited by source:
+
 <table>
 <tr>
-<td><img src="docs/assets/bedrock_test.png" alt="Bedrock agent verdict grounded in AML/PSD2"></td>
+<td><img src="docs/assets/s3_files.png" alt="Regulatory corpus in S3 — AMLD5 / GDPR / PSD2 / RTS-SCA"></td>
 <td><img src="docs/assets/bedrock_kb.png" alt="Knowledge Base — 4 regulatory docs indexed, synced"></td>
 </tr>
 </table>
+
+<p align="center">
+  <img src="docs/assets/bedrock_test_sources.png" width="100%" alt="Pre-processing trace citing the exact KB source (s3://…/amld_2015_849…) — grounding proof">
+</p>
 
 - **Knowledge Base** `fintelliguard-dev-regulations` → vector store on **OpenSearch
   Serverless** (`fintelliguard-reg`), embeddings `amazon.titan-embed-text-v2:0`, four
@@ -337,12 +348,13 @@ Kafka round-trip from a Databricks cluster — produce a uniquely-marked record,
 the exact `(partition, offset)`, raise loudly with SG / instance-profile / PassRole
 diagnostics if it fails. It passed live:
 
-<table>
-<tr>
-<td><img src="docs/assets/streaming_dbx_run.png" alt="MSK probe: round-tripped over the private path — PASS"></td>
-<td><img src="docs/assets/cloudwatch.png" alt="scorer CloudWatch logs: scored decisions, review/block"></td>
-</tr>
-</table>
+<p align="center">
+  <img src="docs/assets/streaming_dbx_run.png" width="100%" alt="MSK probe: round-tripped a marked record over the private path — PASS">
+</p>
+
+<p align="center">
+  <img src="docs/assets/cloudwatch.png" width="100%" alt="scorer CloudWatch logs: live scored decisions — score → review / block">
+</p>
 
 > The in-VPC ECS scorer scores with a **bundled demo model** (so the live-stream demo runs
 > before any model exists); the *real* Mosaic endpoint + *real* Bedrock verdict are exercised
