@@ -30,6 +30,18 @@
 
 ---
 
+## Contents
+
+- [The problem](#the-problem) · [Status — proven live, then torn down](#status--proven-end-to-end-on-real-cloud-then-torn-down)
+- [Architecture — three tiers, two clouds](#architecture--three-tier-decisioning-two-zone-genai)
+  - [The decisioning funnel](#the-decisioning-funnel) · [Tier 1 · scorer](#tier-1--the-scorer-xgboost-on-mosaic-ai-model-serving) · [Tier 2 · compliance agent](#tier-2--the-compliance-agent-aws-bedrock) · [Tier 3 · analyst copilot](#tier-3--the-analyst-copilot-databricks-mosaic-ai)
+- [Data flow — the medallion pipeline](#data-flow--the-medallion-pipeline-dlt)
+- [The private cross-cloud path (MSK ↔ Databricks)](#the-private-cross-cloud-path-msk--databricks)
+- [CI/CD & IaC](#cicd--iac--everything-is-gated-nothing-is-by-console) · [Observability](#observability) · [Regulated-AI docs](#regulated-ai-generated-from-the-code)
+- [Testing philosophy](#testing-philosophy-honest) · [Repository layout](#repository-layout) · [Beyond the demo](#beyond-the-demo) · [Docs](#docs)
+
+---
+
 ## The problem
 
 Card-fraud systems fail on two fronts at once. Rule engines flag transactions *after*
