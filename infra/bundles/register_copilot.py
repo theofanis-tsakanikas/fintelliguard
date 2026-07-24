@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -25,6 +26,15 @@ from mlflow.tracking import MlflowClient
 from mlflow.types import ColSpec, Schema
 
 from agents.databricks.copilot_pyfunc import CONFIG_ARTIFACT, FEATURES_ARTIFACT, CopilotPyfunc
+
+# Files/dirs that must NEVER be swept into the model artifact. The runner leaves a ~600MB
+# `.terraform` provider binary under agents/bedrock/terraform/ after the layer applies; MLflow's
+# code_paths copies directories wholesale, so without this it packaged that binary into the model
+# and the multipart upload to UC-managed storage failed with SignatureDoesNotMatch — the copilot
+# model registered but its artifacts never uploaded, so no production alias, so no serving.
+_JUNK = shutil.ignore_patterns(
+    ".terraform", "*.tfstate*", ".terraform.lock.hcl", "__pycache__", "*.pyc", "dist", "*.whl"
+)
 
 _INPUT = Schema(
     [
@@ -65,6 +75,13 @@ def main() -> None:
         cfg_path.write_text(json.dumps(config), encoding="utf-8")
         feat_path.write_text(json.dumps(features), encoding="utf-8")
 
+        # Copy the code packages to a clean tree, excluding the terraform/build junk above, and
+        # log THOSE — never the working dirs, which on the runner carry the huge .terraform binary.
+        code_root = Path(tmp) / "code"
+        for pkg in ("agents", "ml"):
+            shutil.copytree(pkg, code_root / pkg, ignore=_JUNK)
+        code_paths = [str(code_root / pkg) for pkg in ("agents", "ml")]
+
         example = pd.DataFrame(
             [
                 {
@@ -81,8 +98,8 @@ def main() -> None:
                 python_model=CopilotPyfunc(),
                 artifacts={CONFIG_ARTIFACT: str(cfg_path), FEATURES_ARTIFACT: str(feat_path)},
                 # The copilot imports agents.databricks.* and its tools; ml is on the path for
-                # the shared feature schema. Relative to the runner CWD (the repo root).
-                code_paths=["agents", "ml"],
+                # the shared feature schema. Cleaned copies (see _JUNK) — never the raw dirs.
+                code_paths=code_paths,
                 pip_requirements=[
                     "mlflow",
                     "pandas",
