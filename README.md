@@ -111,6 +111,31 @@ flowchart LR
   asynchronously with semantic case retrieval (Vector Search) and the same
   `get_fraud_score()`. Decision support, not automation.
 
+<details>
+<summary><b>Why two clouds, not one?</b></summary>
+
+<br>
+
+You *could* build all three tiers on Databricks alone — Mosaic AI has model serving, an agent
+framework, and vector search. Two clouds is a deliberate choice, not a technical necessity:
+
+- **It models a real brownfield bank.** The real-time edge (near the payment gateway) lives in
+  AWS; the lakehouse lives in Databricks — two teams, two platforms, joined by a contract, not
+  coupling.
+- **Each GenAI zone sits in its natural home.** Bedrock owns the real-time *regulated* verdict
+  at the edge; Databricks owns the async copilot where the data lives; Tier 1 trains and serves
+  where the features live (feature parity).
+- **A narrow trust boundary.** Bedrock reaches the model only via `get_fraud_score()` over a
+  private endpoint — it never reads Delta or raw data. One platform would lose that boundary.
+- **Managed compliance primitives.** Bedrock Guardrails + Knowledge Bases give auditable PII
+  redaction and grounding for the regulated path out of the box.
+
+**Honest trade-off:** a greenfield project with no AWS footprint could do it all in Databricks —
+simpler, one bill, one IAM. Two clouds buys realism, separation, and managed compliance at the
+cost of the cross-cloud integration — which is itself part of what this project demonstrates.
+
+</details>
+
 See [`docs/NARRATIVE.md`](docs/NARRATIVE.md) for the *why* and
 [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) for the full component inventory.
 
