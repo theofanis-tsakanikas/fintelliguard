@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/banner.png" alt="FintelliGuard — real-time fraud detection & compliance" width="100%">
+</p>
+
 # FintelliGuard
 
 [![CI](https://github.com/theofanis-tsakanikas/fintelliguard/actions/workflows/ci.yml/badge.svg)](https://github.com/theofanis-tsakanikas/fintelliguard/actions/workflows/ci.yml)
