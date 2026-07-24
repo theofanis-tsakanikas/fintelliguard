@@ -47,7 +47,7 @@ The analyst copilot lives where the data lives. Exploratory, touches TBs of hist
 
 **Why not forced:** the real-time verdict cannot live in Databricks (latency + payment edge); the copilot cannot live in Bedrock (data + volume of history). Each in its natural home.
 
-**Honest stance (for interviews):** in a single-vendor shop it would all be on one platform. The split deliberately mirrors a realistic two-team enterprise and uses each cloud's native security model.
+**Honest stance:** in a single-vendor shop it would all be on one platform. The split deliberately mirrors a realistic two-team enterprise and uses each cloud's native security model.
 
 ---
 
@@ -159,7 +159,7 @@ fintelliguard/
 
 ---
 
-## 13. Interview talking points
+## 13. Anticipated design questions
 
 - **"Why two AI platforms?"** → brownfield two-team enterprise; native security model per cloud; integration without coupling (contract, not coupling).
 - **"Why not everything in Databricks?"** → in single-vendor I would; deliberately split for realism.

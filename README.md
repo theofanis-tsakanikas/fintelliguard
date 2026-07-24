@@ -51,7 +51,7 @@ mid-size bank throws 40–80 analysts at.
 
 FintelliGuard scores **every** transaction in under 50 ms, auto-drafts a
 regulation-grounded compliance verdict for the suspicious ~1%, and gives analysts an AI
-copilot to investigate the rest — attacking fraud latency and compliance cost in one system.
+copilot to investigate the rest, attacking fraud latency and compliance cost in one system.
 
 ## Status — proven end-to-end on real cloud, then torn down
 
@@ -101,12 +101,12 @@ flowchart LR
   T2 -->|"flagged case"| T3
 ```
 
-- **Tier 1 — XGBoost on Mosaic AI Model Serving.** Scores 100% of transactions in <50 ms;
+- **Tier 1 — XGBoost on Mosaic AI Model Serving.** Scores every transaction in <50 ms (local p99 ~10 ms);
   ~99% pass and are done. The fast, numeric decision, with per-prediction **TreeSHAP**
   explanations.
 - **Tier 2 — AWS Bedrock Agent.** Only the suspicious ~1%. Calls back for the score via
   `get_fraud_score()`, grounds a compliance verdict in AML / PSD2 via RAG, and passes it
-  through **Guardrails**. The slow reasoning layer — never the scorer.
+  through **Guardrails**. The slow reasoning layer, never the scorer.
 - **Tier 3 — Databricks Mosaic AI copilot.** Human analysts investigate flagged cases
   asynchronously with semantic case retrieval (Vector Search) and the same
   `get_fraud_score()`. Decision support, not automation.
@@ -116,23 +116,23 @@ flowchart LR
 
 <br>
 
-You *could* build all three tiers on Databricks alone — Mosaic AI has model serving, an agent
+You *could* build all three tiers on Databricks alone: Mosaic AI has model serving, an agent
 framework, and vector search. Two clouds is a deliberate choice, not a technical necessity:
 
 - **It models a real brownfield bank.** The real-time edge (near the payment gateway) lives in
-  AWS; the lakehouse lives in Databricks — two teams, two platforms, joined by a contract, not
+  AWS; the lakehouse lives in Databricks. Two teams, two platforms, joined by a contract, not
   coupling.
 - **Each GenAI zone sits in its natural home.** Bedrock owns the real-time *regulated* verdict
   at the edge; Databricks owns the async copilot where the data lives; Tier 1 trains and serves
   where the features live (feature parity).
 - **A narrow trust boundary.** Bedrock reaches the model only via `get_fraud_score()` over a
-  private endpoint — it never reads Delta or raw data. One platform would lose that boundary.
+  private endpoint, and it never reads Delta or raw data. One platform would lose that boundary.
 - **Managed compliance primitives.** Bedrock Guardrails + Knowledge Bases give auditable PII
   redaction and grounding for the regulated path out of the box.
 
 **Honest trade-off:** a greenfield project with no AWS footprint could do it all in Databricks —
 simpler, one bill, one IAM. Two clouds buys realism, separation, and managed compliance at the
-cost of the cross-cloud integration — which is itself part of what this project demonstrates.
+cost of the cross-cloud integration, which is itself part of what this project demonstrates.
 
 </details>
 
@@ -173,8 +173,26 @@ at Tier 1, no escalation`.
 ## Tier 1 — the scorer (XGBoost on Mosaic AI Model Serving)
 
 Trained on **IEEE-CIS** (590,540 transactions, 20,663 fraud = **3.50%**) with a compact,
-**interpretable 14-feature** contract — not the anonymised `V1–V339`, so every feature is
+**interpretable 14-feature** contract, not the anonymised `V1–V339`, so every feature is
 explainable to a compliance analyst and computable online.
+
+<details>
+<summary><b>The 14 features</b></summary>
+
+<br>
+
+| Group | Features |
+|---|---|
+| Amount (3) | `amount_usd`, `amount_log`, `amount_zscore` |
+| Velocity (4) | `txn_velocity_1h`, `txn_velocity_24h`, `amount_sum_1h`, `distinct_merchants_24h` |
+| Identity & device (3) | `card_age_days`, `device_seen_before`, `device_txn_count_24h` |
+| Geography (2) | `country_mismatch`, `distinct_countries_24h` |
+| Merchant (1) | `mcc_risk_tier` |
+| Temporal (1) | `is_unusual_hour` |
+
+Full definitions in [`docs/features.md`](docs/features.md).
+
+</details>
 
 **Promotion policy (enforced in `ml/training/promote.py`):** Staging → Production only when
 **AUC-ROC ≥ 0.83 AND fraud-class precision ≥ 0.85** on held-out test. Fail-closed. The live
@@ -193,16 +211,15 @@ run cleared it and registered `fintelliguard.ml.fraud_scorer` → alias `product
 </tr>
 </table>
 
-The scorer (`ml/serving/scorer.py`) bands the score — `≥ 0.90 → block`, `≥ 0.70 → review`,
-else `allow` — and returns the exact per-transaction **TreeSHAP** contributions
+The scorer (`ml/serving/scorer.py`) bands the score (`≥ 0.90 → block`, `≥ 0.70 → review`,
+else `allow`) and returns the exact per-transaction **TreeSHAP** contributions
 (`pred_contribs`) as `top_features`: *why this transaction*, not global importance. The
 serving endpoint `fintelliguard-fraud-score` is `Small` / scale-to-zero.
 
 > The 14-feature contract is documented in [`docs/features.md`](docs/features.md); the
 > canonical count is `len(FEATURE_SPECS)` in `ml/features/schema.py`. (A 15th,
-> `merchant_risk_score`, was **removed, not faked** — it needs merchant identity *and* labels
-> in one dataset, which no source here has. Some prose still says "15"; the executable count
-> is **14**.)
+> `merchant_risk_score`, was **removed, not faked**: it needs merchant identity *and* labels
+> in one dataset, which no source here has.)
 
 ---
 
@@ -218,7 +235,7 @@ verdict passes an output **Guardrail**.
 </p>
 
 The regulatory corpus lives in S3, is indexed into the Knowledge Base, and every verdict is
-grounded in it — cited by source:
+grounded in it, cited by source:
 
 <table>
 <tr>
