@@ -82,3 +82,7 @@ notes/
 
 # Working screenshots — never in the public repo
 images/
+
+# Promo / demo recordings — raw ScreenStudio captures + exports (multi-GB binaries).
+# The curated README screenshots live in docs/assets/ (committed); this stays local-only.
+promo/
