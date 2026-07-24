@@ -4,10 +4,29 @@
 
 # FintelliGuard
 
-[![CI](https://github.com/theofanis-tsakanikas/fintelliguard/actions/workflows/ci.yml/badge.svg)](https://github.com/theofanis-tsakanikas/fintelliguard/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://github.com/theofanis-tsakanikas/fintelliguard/actions/workflows/ci.yml"><img src="https://github.com/theofanis-tsakanikas/fintelliguard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/IaC-Terraform-7B42BC?logo=terraform&logoColor=white" alt="Terraform">
+  <br>
+  <img src="https://img.shields.io/badge/AWS-Bedrock-FF9900?logo=amazonwebservices&logoColor=white" alt="AWS Bedrock">
+  <img src="https://img.shields.io/badge/Databricks-Mosaic%20AI-FF3621?logo=databricks&logoColor=white" alt="Databricks Mosaic AI">
+  <img src="https://img.shields.io/badge/Kafka-MSK-231F20?logo=apachekafka&logoColor=white" alt="Kafka / MSK">
+  <img src="https://img.shields.io/badge/XGBoost-scorer-006ACC" alt="XGBoost">
+  <img src="https://img.shields.io/badge/MLflow-2.16-0194E2?logo=mlflow&logoColor=white" alt="MLflow">
+  <br>
+  <img src="https://img.shields.io/badge/fraud%20AUC--ROC-0.87-2ea44f" alt="fraud AUC-ROC 0.87">
+  <img src="https://img.shields.io/badge/guardrail%20red--team-100%25-2ea44f" alt="guardrail red-team 100%">
+  <img src="https://img.shields.io/badge/tests-430%2B%20passing-2ea44f" alt="430+ tests passing">
+</p>
 
 **Real-time financial fraud detection & compliance platform.**
 *AWS Bedrock · Databricks Mosaic AI · Kafka / MSK · Spark · XGBoost · Terraform · GitHub Actions*
+
+> **The name** — **Fin**(ancial) + **Intelli**(gence) + **Guard**: it *guards* financial
+> transactions *intelligently*. The "Guard" is literal — Bedrock **Guardrails** are a
+> first-class, CI-enforced control in Tier 2.
 
 ---
 
