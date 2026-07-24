@@ -42,12 +42,15 @@ jobs:
     steps:
       - name: Typed-confirmation guard
         id: guard
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          if [ "${{ inputs.confirm }}" != "${{ inputs.environment }}" ]; then
-            echo "::error::confirmation '${{ inputs.confirm }}' does not match environment '${{ inputs.environment }}'"
+          if [ "$CONFIRM" != "$ENVIRONMENT" ]; then
+            echo "::error::confirmation does not match the environment name"
             exit 1
           fi
-          echo "Confirmed destruction of '${{ inputs.environment }}'."
+          echo "Confirmed destruction of '$ENVIRONMENT'."
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 

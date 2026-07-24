@@ -130,10 +130,14 @@ def test_ci_validates_every_terraform_layer():
 
 def test_destroy_requires_typed_confirmation():
     text = _text("destroy")
-    # The guard compares the typed confirmation to the environment name.
+    # The guard compares the typed confirmation to the environment name. The free-text input
+    # is mapped to an env var and compared quoted ("$CONFIRM" != "$ENVIRONMENT") rather than
+    # interpolated straight into the shell, so a malicious dispatch value cannot inject.
     assert "inputs.confirm" in text
     assert "inputs.environment" in text
-    assert '"${{ inputs.confirm }}" != "${{ inputs.environment }}"' in text
+    assert "CONFIRM: ${{ inputs.confirm }}" in text
+    assert "ENVIRONMENT: ${{ inputs.environment }}" in text
+    assert '"$CONFIRM" != "$ENVIRONMENT"' in text
     doc = _load("destroy")
     assert "confirm" in _triggers(doc)["workflow_dispatch"]["inputs"]
 

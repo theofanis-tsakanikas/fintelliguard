@@ -38,8 +38,10 @@ jobs:
     environment: bootstrap # GitHub environment protection (required reviewers)
     steps:
       - name: Confirmation guard
+        env:
+          CONFIRM: ${{ inputs.confirm }}
         run: |
-          if [ "${{ inputs.confirm }}" != "bootstrap" ]; then
+          if [ "$CONFIRM" != "bootstrap" ]; then
             echo "::error::type 'bootstrap' to confirm"; exit 1
           fi
 
