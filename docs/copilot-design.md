@@ -15,12 +15,16 @@ system prompt. Tool descriptions are first-class engineering.
 
 | Tool | Use for | Mechanism |
 |---|---|---|
-| `query_lakehouse` | Precise structured facts: counts, sums, merchant history | Genie NL→SQL over Unity Catalog |
+| `query_lakehouse` *(deferred)* | Precise structured facts: counts, sums, merchant history | Genie NL→SQL over Unity Catalog — not provisioned yet |
 | `search_similar_cases` | "Cases like this one" — semantic similarity | Vector Search over case embeddings (RAG) |
 | `get_fraud_score` | The model's score + which features drove it | Same endpoint Bedrock uses |
 
 Routing principle: structured/exact → `query_lakehouse`; similarity/"like this" →
 `search_similar_cases`; "why flagged" → `get_fraud_score`. The agent may chain tools.
+
+> **Live vs deferred:** `search_similar_cases` and `get_fraud_score` run live; `query_lakehouse`
+> (Genie) is deferred — no SQL warehouse / Genie space is provisioned, so the served copilot
+> runs the other two tools.
 
 ## Vector index
 

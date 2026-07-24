@@ -1,8 +1,10 @@
 # Deploy runbook
 
-The ordered, one-time sequence to provision FintelliGuard to real cloud accounts. **This
-is deferred** in the repo — everything here is built + offline-validated; running it
-incurs cost. Region throughout: **eu-central-1**.
+The ordered sequence to provision FintelliGuard to real cloud accounts. The system **has
+been** run end-to-end through these workflows on real AWS + Databricks, proven, then
+destroyed to zero cost — it is **not currently running** (one `deploy` dispatch brings it
+back). Everything here is also offline-validated, so a dry read costs nothing. Region
+throughout: **eu-central-1**.
 
 > Each step is gated. Always `terraform plan` before `apply`, and review it. The CI
 > `ci.yml` workflow reproduces all the *local* gates with no cloud creds; the
@@ -30,7 +32,7 @@ incurs cost. Region throughout: **eu-central-1**.
 
 ## Resolve-at-deploy (decide these first)
 
-- **Bedrock model region availability.** Verify Claude (Haiku) is available and
+- **Bedrock model region availability.** Verify the agent's model (wired default Amazon Nova Lite; Claude Haiku needs a one-time Anthropic account approval) is available and
   **model access is granted** in **eu-central-1** before step 4
   (`aws bedrock list-foundation-models --region eu-central-1`). If absent, request access
   or set `agents/bedrock/terraform` `var.foundation_model` / region accordingly.
@@ -71,7 +73,7 @@ terraform init && terraform plan && terraform apply
 ```
 
 ### 4. agents/bedrock/terraform — Tier-2 zone
-**First verify Bedrock Claude availability in eu-central-1** (see resolve-at-deploy).
+**First verify Bedrock model availability in eu-central-1** — wired default Amazon Nova Lite; Claude needs an Anthropic account approval (see resolve-at-deploy).
 Then the agent + Knowledge Base (OpenSearch Serverless) + Guardrail + FraudScoring
 action-group Lambda (consumes infra/aws role/secrets/KMS/subnets).
 ```bash
@@ -147,7 +149,7 @@ python -m simulator --sink kafka --duration 60   # simulator -> Kafka -> DLT -> 
 ## Cost controls (keep active)
 
 - Databricks clusters auto-terminate after 30 min idle; serving endpoints scale to zero.
-- MSK off in dev (local Kafka); Bedrock **Haiku** in dev (Sonnet for final eval only).
+- MSK off in dev (local Kafka); Bedrock **Nova Lite** in dev — Claude Haiku once Anthropic-approved (Sonnet for final eval only).
 - Always `terraform plan` before `apply`; `terraform destroy` per layer when idle.
 - Budget target ~125–215 EUR/month managed; keep < 250 EUR total.
 

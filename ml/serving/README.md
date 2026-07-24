@@ -8,7 +8,7 @@ Feature Store lookup are deferred to deploy**.
 ## Modules
 
 - `scorer.py` — pure scoring wrapper. Input: a feature vector of **exactly** the
-  canonical 15 features (`ml/features`), parity-checked (missing/extra → clear error).
+  canonical 14 features (`ml/features`), parity-checked (missing/extra → clear error).
   Output: the contract `{fraud_score, model_version, threshold, decision_hint,
   top_features[]}`.
   - `fraud_score` — model probability.
@@ -53,6 +53,6 @@ ruff check .
 ## Deferred to deploy
 
 The Mosaic AI Model Serving endpoint (REST, autoscale, private VPC) and the online
-Feature Store lookup by `card_hash` — the endpoint resolves the 15 features for a
+Feature Store lookup by `card_hash` — the endpoint resolves the 14 features for a
 transaction, then calls the scorer — run in the cloud and are deferred to deploy. This
 layer ships the loadable, predict-able artifact and the scoring logic.

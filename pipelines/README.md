@@ -6,7 +6,7 @@ Spark transforms** (`*_transforms.py`) from a **thin DLT framework layer**
 `gold.<name>` in Unity Catalog `fintelliguard`.
 
 ```
-sources → bronze (raw, rescued) → silver (clean, validated, enriched) → gold (15 features)
+sources → bronze (raw, rescued) → silver (clean, validated, enriched) → gold (14 features)
 ```
 
 ## Layers

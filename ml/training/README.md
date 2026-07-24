@@ -9,10 +9,10 @@ Store is **deferred to deploy**.
 
 - `dataset.py` — feature access by **dependency injection**. `train_model` receives a
   features+label DataFrame, so tests pass a synthetic frame (`make_synthetic_frame`) and
-  never touch the cloud. `prepare_xy` enforces parity: X is exactly the canonical 15
+  never touch the cloud. `prepare_xy` enforces parity: X is exactly the canonical 14
   features from `ml/features` (in order); the label (`is_fraud`) is never a feature.
   `load_gold_training_features` is the production loader (reads `gold.txn_features_training`).
-- `train.py` — deterministic, seeded train/val/test split; trains XGBoost on the 15
+- `train.py` — deterministic, seeded train/val/test split; trains XGBoost on the 14
   features; computes **AUC-ROC, PR-AUC, fraud-class precision/recall**; extracts
   **feature importance** (for the Bedrock verdict contract). Logs params/metrics/model/
   importance to MLflow under a **configurable tracking URI** (`TrainConfig.tracking_uri`:

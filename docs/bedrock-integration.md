@@ -44,7 +44,7 @@ The `top_features` are the *input* to the agent's reasoning, not a substitute fo
 
 ## Knowledge Base (RAG)
 
-- Sources: AML directives, PSD2 articles, internal fraud-pattern documents.
+- Sources: verbatim EUR-Lex regulation — AMLD5 (2015/849), GDPR (2016/679), PSD2 (2015/2366), and RTS on SCA (2018/389). Vector store: OpenSearch Serverless (`fintelliguard-reg`), embeddings `amazon.titan-embed-text-v2:0`.
 - Ingestion pipeline with document versioning and chunk-level metadata.
 - The agent grounds every verdict in retrieved regulatory text — no ungrounded claims.
 
@@ -56,8 +56,9 @@ The `top_features` are the *input* to the agent's reasoning, not a substitute fo
 
 ## Models
 
-- `claude-haiku` for triage / development.
-- `claude-sonnet` for the final verdict.
+- **Wired default: Amazon Nova Lite** (`eu.amazon.nova-lite-v1:0`) — Anthropic streaming models need a one-time account use-case approval.
+- `claude-haiku-4-5` switchable in dev once Anthropic access is granted.
+- `claude-sonnet` for the final verdict is design-spec only (not wired).
 - Bedrock model evaluation measures verdict quality against a labeled eval set.
 
 ## Security & connectivity

@@ -52,8 +52,8 @@ fintelliguard/
 | Data platform | Databricks DLT · Unity Catalog · Delta Lake |
 | ML training | XGBoost · MLflow · Mosaic AI Feature Store |
 | ML serving | Mosaic AI Model Serving (REST, autoscale) |
-| Real-time AI (Tier 2) | AWS Bedrock Agent · Knowledge Bases · Guardrails · Claude (Haiku 4.5 → Sonnet 4.6) |
-| Investigation AI (Tier 3) | Mosaic AI Agent Framework · Vector Search · Genie · Agent Evaluation |
+| Real-time AI (Tier 2) | AWS Bedrock Agent · Knowledge Bases · Guardrails · Amazon Nova Lite (wired default; Claude Haiku 4.5 switchable — Anthropic access is account-gated) |
+| Investigation AI (Tier 3) | Mosaic AI Agent Framework · Vector Search · `get_fraud_score` · Agent Evaluation (Genie NL→SQL deferred — not provisioned) |
 | Self-healing | LangGraph Supervisor + Medic · LangSmith tracing |
 | IaC | Terraform (3 isolated layers) · Databricks Asset Bundles |
 | CI/CD | GitHub Actions |
@@ -69,7 +69,7 @@ fintelliguard/
 
 **DLT naming convention:** `bronze.<name>`, `silver.<name>`, `gold.<name>`. Unity Catalog: `fintelliguard.{bronze,silver,gold}`.
 
-**Feature parity is non-negotiable.** The same 15 Gold features train the model AND serve at inference. Any feature change updates `ml/training/` and `ml/features/` (both adapters) in the SAME commit. See `@docs/features.md`.
+**Feature parity is non-negotiable.** The same 14 Gold features train the model AND serve at inference. Any feature change updates `ml/training/` and `ml/features/` (both adapters) in the SAME commit. See `@docs/features.md`.
 
 **The cross-cloud contract.** Bedrock reaches the model ONLY via `get_fraud_score()` against the Mosaic Model Serving endpoint. Bedrock never reads Delta tables, never reads raw data, never knows Mosaic internals. The endpoint is reached through a private VPC endpoint, never public.
 
@@ -77,7 +77,7 @@ fintelliguard/
 
 **Responsible-AI gates are deterministic and CI-enforced** (see `docs/governance/`). The guardrail is proven against a labelled red-team set (`agents/bedrock/guardrails/` — block-rate must stay 100%, and the coverage test parses `guardrail.tf`, so removing a policy class fails CI). Every verdict must pass the deterministic verdict gate (`agents/bedrock/eval/judge.py`: schema, no-PII, grounding, faithfulness, decision). The model/dataset cards + EU-AI-Act doc are **generated from the code** (`python -m ml.governance.generate`) — edit a threshold and run `make govern-docs`, or CI's `--check` fails. Feature drift is monitored by `ml/monitoring/drift.py` (PSI/KS).
 
-**Copilot tool routing.** The copilot (Agent Framework) chooses between Genie (NL→SQL, precise facts), Vector Search (semantic similar-case retrieval), and `get_fraud_score()`. Tool descriptions are first-class engineering — write them carefully. Routing quality is measured by Mosaic AI Agent Evaluation.
+**Copilot tool routing.** The copilot (Agent Framework) chooses between Genie (`query_lakehouse`, NL→SQL — **deferred**, no SQL warehouse / Genie space provisioned), Vector Search (semantic similar-case retrieval), and `get_fraud_score()`. The live copilot runs the latter two; Genie is the honest deferral. Tool descriptions are first-class engineering — write them carefully. Routing quality is measured by Mosaic AI Agent Evaluation.
 
 **MLflow promotion policy.** Staging→Production only when AUC-ROC ≥ 0.83 AND fraud-class precision ≥ 0.85 on held-out test. Document metrics in the MLflow run before promoting. (The AUC floor is 0.83, not 0.92: the deliberately compact 14-feature interpretable contract tops out ~0.85 on real IEEE-CIS — 0.92 assumes a feature set this project does not use. See `ml/training/promote.py`.)
 
@@ -87,7 +87,7 @@ fintelliguard/
 
 - Databricks clusters: auto-terminate after 30 min idle (set in cluster config, not manually).
 - AWS MSK: use local Kafka (Docker) in dev. Provision MSK only for integration testing and final demo.
-- Bedrock: use `anthropic.claude-haiku-4-5-20251001-v1:0` in dev (the bare `anthropic.claude-haiku-4-5` does NOT resolve — Bedrock serves Haiku 4.5 only under its dated id; verify any change with `aws bedrock get-foundation-model`). Switch to `anthropic.claude-sonnet-4-6` for final evaluation only.
+- Bedrock: the agent's **wired default is Amazon Nova Lite** (`eu.amazon.nova-lite-v1:0`) — Anthropic streaming models need a one-time account use-case approval, so Nova Lite is the safe default. Once Anthropic access is granted, use `eu.anthropic.claude-haiku-4-5-20251001-v1:0` in dev (the bare `anthropic.claude-haiku-4-5` does NOT resolve — Bedrock serves Haiku 4.5 only under its dated id; verify any change with `aws bedrock get-foundation-model`). Switch to Sonnet for final evaluation only.
 - Always `terraform plan` before `apply`. Never `apply` without reviewing the plan.
 - `terraform destroy` per layer when not actively working.
 
@@ -96,6 +96,6 @@ fintelliguard/
 - `@docs/NARRATIVE.md` — business context + architectural decisions
 - `@docs/PROJECT_PLAN.md` — full master plan, roadmap, component inventory
 - `@docs/data-flow.md` — sources → bronze → silver → gold → ML → Bedrock/copilot
-- `@docs/features.md` — the 15 Gold features: definition, computation, type, source mapping
+- `@docs/features.md` — the 14 Gold features: definition, computation, type, source mapping
 - `@docs/bedrock-integration.md` — Bedrock action group schema + Mosaic API contract
 - `@docs/copilot-design.md` — Agent Framework tools, prompts, evaluation

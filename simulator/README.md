@@ -8,7 +8,7 @@ infrastructure required to run**.
 
 The **bronze stream contract** (`docs/data-flow.md`, topic `txn.raw`) — exactly these
 eight fields: `transaction_id`, `timestamp`, `amount`, `merchant_id`, `card_hash`,
-`device_id`, `ip_country`, `mcc_code`. The 15 Gold features are derived downstream.
+`device_id`, `ip_country`, `mcc_code`. The 14 Gold features are derived downstream.
 
 Ground-truth labels (`is_fraud_truth`, `fraud_pattern`) are **eval/demo only** and kept
 out of the model-facing payload (`Transaction.to_contract_dict()`); they appear only in

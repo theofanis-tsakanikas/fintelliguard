@@ -12,7 +12,7 @@ Python simulator (~500 txns/sec)
   → Spark Structured Streaming
   → bronze.transactions_stream    raw JSON, _rescued_data, ingest metadata
   → silver.transactions_clean     validated, typed, no nulls, enriched (mcc_risk, ISO country)
-  → gold.txn_features_realtime     the 15 features (velocity, z-score, risk flags)
+  → gold.txn_features_realtime     the 14 features (velocity, z-score, risk flags)
   → Mosaic AI Feature Store (online)   <5ms lookup by card_hash
 ```
 
@@ -33,7 +33,7 @@ IEEE-CIS dataset (590k labeled txns)
   → Auto Loader           schema rescue, row_hash
   → bronze.ieee_cis_raw
   → silver.ieee_cis_clean   imputed (median V-cols), encoded, typed
-  → gold.txn_features_training   same 15 features + isFraud label, 70/15/15 split
+  → gold.txn_features_training   same 14 features + isFraud label, 70/15/15 split
   → MLflow training (XGBoost)
 ```
 
@@ -52,8 +52,9 @@ IEEE-CIS dataset (590k labeled txns)
 
 - **Tier 1** consumes the score directly in the transaction path.
 - **Tier 2** (Bedrock) calls `get_fraud_score()` across the cloud boundary, then RAG + Guardrails.
-- **Tier 3** (copilot) reads the lakehouse (Genie NL→SQL), Vector Search over case
-  embeddings, and `get_fraud_score()` for context.
+- **Tier 3** (copilot) uses Vector Search over case embeddings and `get_fraud_score()`
+  for context. Genie NL→SQL (`query_lakehouse`) is deferred — no SQL warehouse / Genie
+  space is provisioned.
 
 ## Feature parity
 

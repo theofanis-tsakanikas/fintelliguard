@@ -50,7 +50,7 @@ Neither is forced. Each is where it belongs.
 
 **Mosaic AI owns the score; Bedrock owns the reasoning.** Detection and explanation are different jobs. XGBoost answers "how likely is this fraud?" with a number. Bedrock answers "why, which regulation, and what to do?" with a documented narrative. A number is not a compliance decision; the model's feature importance is the *input* to Bedrock's reasoning, not a substitute for it.
 
-**The Feature Store is the single source of truth for features.** The same 15 Gold features train the model (offline store) and serve it at inference (online store, <5ms). This eliminates training-serving skew — one of the most common silent production failures.
+**The Feature Store is the single source of truth for features.** The same 14 Gold features train the model (offline store) and are designed to serve it at inference from the online store. This eliminates training-serving skew — one of the most common silent production failures. *(The online lookup is a spec, not yet wired — see the honest scope below.)*
 
 **Guardrails on all regulated output.** Every Tier-2 verdict passes through Bedrock Guardrails for PII redaction and hallucination control, and is traced end-to-end in LangSmith. In a regulated context, proving the model did not leak PII or invent regulations is a requirement, not a nice-to-have.
 
@@ -64,11 +64,12 @@ Neither is forced. Each is where it belongs.
 
 It is not a tutorial follow-along: there is no reference implementation for a Bedrock Agent calling a Mosaic AI Model Serving endpoint as a Tool, and that integration was designed from first principles. Least-privilege IAM, vaulted secrets, KMS encryption and quarantine-not-drop DLT routing are real and tested.
 
-It is also **not deployed**, and several things this document once claimed as accomplished were not. The honest scope is in [`README.md`](../README.md#project-status); the short version:
+It **was** deployed end-to-end on real AWS + Databricks through CI and proven live — every tier, the private cross-cloud path, the promotion gate — then **torn down to zero cost** (it is not running now; one `Deploy` dispatch brings it back). And several things this document once claimed as accomplished still are not — the honest scope, the short version:
 
 - **Gold is a full-table recompute**, not `flatMapGroupsWithState` streaming state. The stream adapter is pure and windowed; the stateful streaming execution described in [`features.md`](features.md) is a design, not code.
 - **The Feature Store online path is a spec**, not a lookup. There is no <5ms online store.
 - **LangSmith traces the self-healing graph only** — not the Bedrock verdict path and not the copilot, which are the two paths that produce regulated output.
+- **Self-healing is tested, not wired live.** The LangGraph Supervisor + Medic runs against mocked signals (37 tests); live monitoring and remediation are cloud-deferred.
 - **PrivateLink is ready, not on.** The VPC endpoint is `count = 0` unless a service name is supplied.
 - **The Tier-2 reasoner is stubbed locally.** Everything that *judges* a verdict — the acceptance gate, the guardrail — is the shipping code.
 

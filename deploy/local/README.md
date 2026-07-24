@@ -43,7 +43,7 @@ simulator ──▶ Kafka (txn.raw) ──▶ streaming scorer ──▶ Prometh
 
 - **Real:** the feature adapter (parity with Gold), the XGBoost scorer + TreeSHAP, the 5-check
   verdict-acceptance gate, the output guardrail, and the Prometheus metrics.
-- **Stubbed:** the Tier-2 **reasoner**. A live run would call AWS Bedrock (Claude) to *write*
+- **Stubbed:** the Tier-2 **reasoner**. A live run would call the AWS Bedrock agent (wired default: Amazon Nova Lite; Claude Haiku once Anthropic-approved) to *write*
   the compliance verdict; here `stream_service.build_stub_verdict` synthesises a well-formed
   verdict from the scorer output so the real gate + guardrail have something to judge. The
   live Bedrock path is deferred to the AWS deploy.

@@ -52,8 +52,10 @@ terraform validate      # offline; no plan/apply
 `aws_bedrockagent_knowledge_base` + `aws_bedrockagent_data_source` (S3 →
 OpenSearch Serverless), `aws_bedrockagent_agent_knowledge_base_association`,
 `aws_bedrockagent_agent_alias`, and `aws_bedrock_guardrail` (PII / denied-topics /
-contextual-grounding policies). **No thin fallback was required.** Dev uses Claude Haiku
-(`foundation_model`); switch to Sonnet for final evaluation.
+contextual-grounding policies). **No thin fallback was required.** The wired default is **Amazon Nova Lite**
+(`foundation_model = eu.amazon.nova-lite-v1:0`) — Anthropic streaming models need a one-time
+account use-case approval, so Nova Lite is the safe default; switch to Claude Haiku 4.5 once
+granted, and Sonnet for final evaluation only.
 
 ## Deferred to deploy
 

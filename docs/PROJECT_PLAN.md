@@ -59,13 +59,13 @@ Two **orthogonal** paths — one feeds training, the other inference.
 
 **Batch (training):** IEEE-CIS (590k labeled txns) → S3 → Auto Loader → bronze → silver → gold.txn_features_training → MLflow.
 
-They converge only at the Model Serving endpoint. The same 15 features → eliminates training-serving skew.
+They converge only at the Model Serving endpoint. The same 14 features → eliminates training-serving skew.
 
 ---
 
-## 6. The 15 Gold features
+## 6. The 14 Gold features
 
-Full definition: see `docs/features.md`. Categories: Amount (3), Velocity (4), Identity/Device (3), Geography (2), Merchant (2), Temporal (1). Semantic features with a per-source adapter (stream / IEEE-CIS). State management designed as flatMapGroupsWithState + checkpointing (not built — Gold is a full-table recompute today; see docs/features.md). We do not use V1-339 (not explainable).
+Full definition: see `docs/features.md`. Categories: Amount (3), Velocity (4), Identity/Device (3), Geography (2), Merchant (1), Temporal (1). Semantic features with a per-source adapter (stream / IEEE-CIS). State management designed as flatMapGroupsWithState + checkpointing (not built — Gold is a full-table recompute today; see docs/features.md). We do not use V1-339 (not explainable).
 
 ---
 
@@ -80,19 +80,19 @@ XGBoost/LightGBM on tabular data. MLflow experiment tracking + Model Registry. P
 ### Databricks (Data Platform)
 - **DLT pipelines** — Bronze/Silver/Gold, exactly-once, checkpointing, expectations with quarantine
 - **Unity Catalog** — RBAC, lineage, row-level security on Gold
-- **Mosaic AI Feature Store** — online (<5ms serving) + offline (point-in-time training joins)
+- **Mosaic AI Feature Store** — offline (point-in-time training joins) built; online (<5ms serving) is a spec, not wired
 - **MLflow** — experiments, registry, promotion policy
 - **Mosaic AI Model Serving** — XGBoost REST endpoint, autoscale
 - **Vector Search** — embeddings of historical fraud cases for the copilot
 - **Mosaic AI Agent Framework** — the conversational analyst copilot
-- **Genie** — NL→SQL over the lakehouse
+- **Genie** — NL→SQL over the lakehouse *(deferred — no SQL warehouse / Genie space provisioned; the copilot runs live with `get_fraud_score` + Vector Search)*
 - **Mosaic AI Agent Evaluation** — quality/groundedness scoring of the copilot
 
 ### AWS Bedrock (Cloud Platform)
 - **Bedrock Agent** — fraud/compliance verdict, tool use (`get_fraud_score()`)
 - **Bedrock Knowledge Bases** — managed RAG over AML/PSD2/fraud patterns
 - **Bedrock Guardrails** — PII redaction + hallucination guards on regulated output
-- **Tiered models** — Claude Haiku (triage/dev) → Sonnet (final verdict)
+- **Models** — wired default **Amazon Nova Lite** (`eu.amazon.nova-lite-v1:0`); Claude Haiku switchable (Anthropic access account-gated); Sonnet is design-spec for the final verdict, not wired
 - **Bedrock model evaluation** — verdict quality
 
 ### Shared infra / ingestion
@@ -155,7 +155,7 @@ fintelliguard/
 
 ## 12. Cost (development)
 
-~125-215 EUR/month. Controls: local Kafka in dev, Bedrock Haiku in dev, cluster auto-terminate 30 min, always `terraform plan` before `apply`, `destroy` per layer when idle. Managed well: <250 EUR total.
+~125-215 EUR/month. Controls: local Kafka in dev, Bedrock Nova Lite in dev (Haiku once Anthropic-approved), cluster auto-terminate 30 min, always `terraform plan` before `apply`, `destroy` per layer when idle. Managed well: <250 EUR total.
 
 ---
 
@@ -164,5 +164,5 @@ fintelliguard/
 - **"Why two AI platforms?"** → brownfield two-team enterprise; native security model per cloud; integration without coupling (contract, not coupling).
 - **"Why not everything in Databricks?"** → in single-vendor I would; deliberately split for realism.
 - **"Why XGBoost and not an LLM for scoring?"** → tabular data, <50ms, explainable, industry standard. LLM for tabular = overengineering.
-- **"How do you avoid training-serving skew?"** → Feature Store, same 15 features, point-in-time joins.
+- **"How do you avoid training-serving skew?"** → Feature Store, same 14 features, point-in-time joins.
 - **"How do you ensure regulated output?"** → Guardrails (PII + hallucination), LangSmith audit trail, grounded RAG on real regulatory text.

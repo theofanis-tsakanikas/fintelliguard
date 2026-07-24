@@ -35,7 +35,7 @@ ruff check .
 
 - Every dashboard JSON parses and conforms (panels, datasource refs, `$environment`).
 - The **Databricks-SQL panel queries execute against a local-Spark gold/silver sample**
-  whose `gold.txn_features_realtime` uses the exact canonical 15-feature schema — so the
+  whose `gold.txn_features_realtime` uses the exact canonical 14-feature schema — so the
   dashboards are cross-checked against the real gold schema (Grafana's `$__timeFilter`
   macro is rewritten to a no-op predicate for local execution).
 - PromQL panels are structurally validated (no Prometheus locally).
