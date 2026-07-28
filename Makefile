@@ -32,6 +32,9 @@ test: ## Run the test suite
 guardrail-scan: ## Run the guardrail red-team coverage gate
 	$(PY) -m agents.bedrock.guardrails.evaluate
 
+verdict-gate: ## Run the verdict-acceptance gate over the labelled verdict set
+	$(PY) -m agents.bedrock.eval.evaluate
+
 gate-proof: ## Attack our own gates: plant real violations, prove each gate refuses them
 	$(PY) -m scripts.gate_proof
 

@@ -65,6 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m agents.bedrock.guardrails.evaluate
+          python -m agents.bedrock.eval.evaluate
           python -m ml.governance.generate --check
 
       # The gates above are green. So were the four tests that guarded the guardrail while
