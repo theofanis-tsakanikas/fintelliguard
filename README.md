@@ -18,7 +18,7 @@
   <br>
   <img src="https://img.shields.io/badge/fraud%20AUC--ROC-0.87-2ea44f" alt="fraud AUC-ROC 0.87">
   <img src="https://img.shields.io/badge/guardrail%20red--team-100%25-2ea44f" alt="guardrail red-team 100%">
-  <img src="https://img.shields.io/badge/tests-430%2B%20passing-2ea44f" alt="430+ tests passing">
+  <img src="https://img.shields.io/badge/tests-592%20passing-2ea44f" alt="592 tests passing">
 </p>
 
 **Real-time financial fraud detection & compliance platform.**
@@ -484,7 +484,8 @@ yet.*
 
 ## Testing philosophy (honest)
 
-**71 test files, ~436 test functions.** Pure logic is unit-tested locally **with the real
+**72 test files · 439 test functions · 592 collected cases** — the gap is parametrisation (one
+function that checks all 60 seeded cases counts as 60 runs; `pytest` reports the 592). Pure logic is unit-tested locally **with the real
 engines** — local PySpark for the DLT transforms, real XGBoost + MLflow for training/serving,
 real LangGraph for self-healing, mocked-client bridges for the Bedrock Lambda and Vector
 Search. Infrastructure is **offline-validated** (`terraform validate` per layer, `databricks
