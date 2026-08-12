@@ -562,51 +562,52 @@ A portfolio that lists only what works is a sales page. This is the rest of it.
 ## Cost
 
 **Nothing is standing today.** The estate is provisioned by one dispatch, exercised, captured and
-destroyed — the teardown is a first-class guarded workflow, and the screenshots above come from an
-estate that no longer exists. What follows is what it would cost *while it stands*: list-price
-estimates for `eu-central-1`, not a measured bill.
-
-The two deploy switches are the reason this table has three totals rather than one.
+destroyed. What follows is what it would cost *while it stands* — list prices for `eu-central-1`,
+**verified 2026-08-12**, not a measured bill.
 
 | Resource | Spec | Rate | Monthly |
 |---|---|---|---:|
+| **`layers: core` — always deployed** | | | |
+| Mosaic AI **Vector Search** endpoint | `STANDARD`, billed per hour **regardless of QPS**, no scale-to-zero | 18.29 DBU/hr × $0.07 | **$934.62** |
+| Model Serving — scorer | `Small`, scale-to-zero after 30 min idle | $0.07/DBU | ~$5 |
+| Model Serving — copilot | `Small`, scale-to-zero after 30 min idle | $0.07/DBU | ~$5 |
+| DLT medallion | 591K rows, run on demand | $0.20–0.36/DBU | ~$20 |
 | **`layers: full` — the regulated path** | | | |
-| OpenSearch Serverless | Knowledge Base collection, **2 OCU minimum** (1 index + 1 search) | $0.24/OCU-hr | **$350.40** |
+| OpenSearch Serverless | Knowledge Base collection, **2-OCU minimum** | $0.24/OCU-hr | **$350.40** |
 | Bedrock — Nova Lite | agent invocations on the flagged ~1% | $0.06/M in · $0.24/M out | ~$2 |
 | Bedrock — Titan embeddings | 4 regulation documents, indexed once | $0.02/M tokens | < $0.01 |
 | **`stage: streaming` — opt-in, excluded from `all`** | | | |
-| MSK | 2 × `kafka.t3.small`, 10 GB EBS each (`enable_msk` defaults **false**) | ~$0.11/hr for the pair | ~$80 |
+| MSK | 2 × `kafka.t3.small` (`enable_msk` defaults **false**) | ~$0.11/hr *(unverified)* | ~$80 |
 | ECS Fargate | generator + scorer, run-then-destroy | $0.04/vCPU-hr | ~$1 |
-| **`layers: core` — always deployed** | | | |
-| Mosaic AI Model Serving — scorer | `Small`, **scale-to-zero** | $0.07/DBU | ~$5 |
-| Mosaic AI Model Serving — copilot | `Small`, **scale-to-zero** | $0.07/DBU | ~$5 |
-| Vector Search endpoint | `STANDARD`, billed while provisioned | *see note* | ~$150 |
-| DLT medallion | 591K rows, run on demand | $0.20–0.36/DBU | ~$15 |
 | **Fixed** | | | |
-| S3 | IEEE-CIS 651 MB + assets, versioned, KMS-encrypted | $0.023/GB-mo | ~$0.05 |
-| KMS | 1 customer-managed key with rotation | $1.00/key-mo | ~$1.10 |
-| Secrets Manager | ~3 secrets | $0.40/secret-mo | $1.20 |
 | VPC endpoints | 2 interface endpoints × 2 AZ | $0.011/hr each | ~$32 |
-| CloudWatch Logs | 5 log groups, low volume | $0.57/GB ingested | ~$2 |
-| SQS, IAM, security groups, subnets | — | free at this volume | ~$1 |
-| **Total — `full` + `streaming`** | | | **≈ $646 / month** |
-| **Total — `full`, no streaming** | | | **≈ $565 / month** |
-| **Total — `core` only** | | | **≈ $212 / month** |
+| KMS · Secrets Manager · S3 · CloudWatch · misc | 1 CMK, ~3 secrets, 651 MB, 5 log groups | list | ~$5.35 |
+| **Total — `core` only** | | | **≈ $1,002 / month** |
+| **Total — `full`, no streaming** | | | **≈ $1,354 / month** |
+| **Total — `full` + `streaming`** | | | **≈ $1,435 / month** |
 
-> The **Vector Search** line is the least certain figure here. Databricks prices it per endpoint-hour
-> and the rate varies by tier and region; ~$150 is an order-of-magnitude placeholder, not a verified
-> rate.
+**One line dominates everything, and it is not the one you would guess.** The Vector Search endpoint
+costs **$934.62/month** — more than every other resource combined — because a `STANDARD` endpoint is
+billed for every hour it exists, regardless of queries, with no scale-to-zero. OpenSearch Serverless,
+at $350.40 against a two-OCU floor, is only the second line.
 
-**What the table makes obvious is why the switches exist.** OpenSearch Serverless is **more than half
-the bill**, and it bills whether or not a single question is asked, because a collection carries a
-two-OCU floor. That is the real reason `layers: core` is a parameter — it removes the largest standing
-cost — and why `streaming` is deliberately **not** part of `stage: all`: MSK adds ~$80/month *and*
-about 30 minutes to every apply and every destroy.
+**That has a consequence worth stating plainly: `layers: core` is not the cheap deploy.** It is
+documented as the option that omits Bedrock and OpenSearch, and it does — but it retains the single
+most expensive resource in the estate. `core` is ~$1,002/month; `full` adds ~$352 on top of it.
 
-Both serving endpoints are `Small` with **scale-to-zero**, so the scorer and the copilot cost nothing
-between demos. `Destroy` returns everything except the state backend to zero.
+Two levers, one of them new:
 
-*Rates are list prices and change; verify before quoting.*
+- **`stage: streaming` stays excluded from `all`** — MSK adds ~$80/month *and* about 30 minutes to
+  every apply and every destroy.
+- **OpenSearch Serverless *NextGen* went generally available on 2026-05-28**, with **no minimum OCU**
+  and scale-to-zero after 10 idle minutes. Migrating the Knowledge Base collection would remove most
+  of the $350 floor. Not done here; recorded because it is the largest available saving.
+
+Both serving endpoints are `Small` with scale-to-zero, so the scorer and the copilot genuinely cost
+nothing between demos. `Destroy` returns everything except the state backend to zero.
+
+*Rates verified against public pricing sources on 2026-08-12; the MSK figure is the repository's own
+and could not be re-verified. Verify before quoting.*
 
 ---
 
