@@ -561,26 +561,52 @@ A portfolio that lists only what works is a sales page. This is the rest of it.
 
 ## Cost
 
-**Nothing here is meant to stand.** The estate is provisioned by one dispatch, exercised,
-captured, and destroyed — the teardown is a first-class guarded workflow, not an afterthought,
-and the README's screenshots come from an estate that no longer exists.
+**Nothing is standing today.** The estate is provisioned by one dispatch, exercised, captured and
+destroyed — the teardown is a first-class guarded workflow, and the screenshots above come from an
+estate that no longer exists. What follows is what it would cost *while it stands*: list-price
+estimates for `eu-central-1`, not a measured bill.
 
-While it *is* standing, the bill has three shapes:
+The two deploy switches are the reason this table has three totals rather than one.
 
-| | |
-|---|---|
-| **Bills continuously** | **MSK** (~$0.11/hour, and — the part that actually hurts — ~30 minutes added to every apply *and* every destroy), **OpenSearch Serverless** backing the Knowledge Base, which carries a minimum-OCU floor whether or not you query it, and the **Vector Search** endpoint |
-| **Scales to zero** | Both Mosaic AI serving endpoints (`Small`, scale-to-zero), so the scorer and copilot cost nothing idle |
-| **Effectively free** | S3, KMS, Secrets Manager, the ECS tasks once stopped, and the preserved state backend |
+| Resource | Spec | Rate | Monthly |
+|---|---|---|---:|
+| **`layers: full` — the regulated path** | | | |
+| OpenSearch Serverless | Knowledge Base collection, **2 OCU minimum** (1 index + 1 search) | $0.24/OCU-hr | **$350.40** |
+| Bedrock — Nova Lite | agent invocations on the flagged ~1% | $0.06/M in · $0.24/M out | ~$2 |
+| Bedrock — Titan embeddings | 4 regulation documents, indexed once | $0.02/M tokens | < $0.01 |
+| **`stage: streaming` — opt-in, excluded from `all`** | | | |
+| MSK | 2 × `kafka.t3.small`, 10 GB EBS each (`enable_msk` defaults **false**) | ~$0.11/hr for the pair | ~$80 |
+| ECS Fargate | generator + scorer, run-then-destroy | $0.04/vCPU-hr | ~$1 |
+| **`layers: core` — always deployed** | | | |
+| Mosaic AI Model Serving — scorer | `Small`, **scale-to-zero** | $0.07/DBU | ~$5 |
+| Mosaic AI Model Serving — copilot | `Small`, **scale-to-zero** | $0.07/DBU | ~$5 |
+| Vector Search endpoint | `STANDARD`, billed while provisioned | *see note* | ~$150 |
+| DLT medallion | 591K rows, run on demand | $0.20–0.36/DBU | ~$15 |
+| **Fixed** | | | |
+| S3 | IEEE-CIS 651 MB + assets, versioned, KMS-encrypted | $0.023/GB-mo | ~$0.05 |
+| KMS | 1 customer-managed key with rotation | $1.00/key-mo | ~$1.10 |
+| Secrets Manager | ~3 secrets | $0.40/secret-mo | $1.20 |
+| VPC endpoints | 2 interface endpoints × 2 AZ | $0.011/hr each | ~$32 |
+| CloudWatch Logs | 5 log groups, low volume | $0.57/GB ingested | ~$2 |
+| SQS, IAM, security groups, subnets | — | free at this volume | ~$1 |
+| **Total — `full` + `streaming`** | | | **≈ $646 / month** |
+| **Total — `full`, no streaming** | | | **≈ $565 / month** |
+| **Total — `core` only** | | | **≈ $212 / month** |
 
-Two controls keep it honest. `layers: core` deploys Tier 1/3 **without** Bedrock and
-OpenSearch, which removes the largest standing cost; and `stage` is deliberately staged so
-`streaming` is **not** part of `all` — the MSK-dependent path is opt-in rather than something
-you pay for by default. The Databricks workspace is **ENTERPRISE** tier, not by preference but
-because the subscription offers no other, and it bills at a higher per-DBU rate — which is why
-how long the workspace is left running matters more than what runs on it.
+> The **Vector Search** line is the least certain figure here. Databricks prices it per endpoint-hour
+> and the rate varies by tier and region; ~$150 is an order-of-magnitude placeholder, not a verified
+> rate.
 
-`Destroy` returns everything except the state backend to zero.
+**What the table makes obvious is why the switches exist.** OpenSearch Serverless is **more than half
+the bill**, and it bills whether or not a single question is asked, because a collection carries a
+two-OCU floor. That is the real reason `layers: core` is a parameter — it removes the largest standing
+cost — and why `streaming` is deliberately **not** part of `stage: all`: MSK adds ~$80/month *and*
+about 30 minutes to every apply and every destroy.
+
+Both serving endpoints are `Small` with **scale-to-zero**, so the scorer and the copilot cost nothing
+between demos. `Destroy` returns everything except the state backend to zero.
+
+*Rates are list prices and change; verify before quoting.*
 
 ---
 
