@@ -7,13 +7,18 @@
 
 Both adapters build the same frozen `FeatureVector`, so the names match by construction and
 the types match because `_num` always returns `float` and every int is `int()`-wrapped. The
-assertion is `==` wearing a lab coat. It passed with all six of these live:
+assertion is `==` wearing a lab coat. It passed with all five of these live:
 
   * `card_age_days` pinned to 0 for every served transaction (0-640 in training)
   * every velocity/count feature shifted by exactly one between train and serve
   * `amount_sum_1h` = 0.0 in training while `amount_usd` = 120.0
   * `is_unusual_hour` computed by a different function on each side
   * `device_seen_before` a perfect duplicate of `card_age_days` in training
+
+A sixth, `merchant_risk_score`, was pinned to 0.0 at serving against 0.02-0.12 in training.
+It is absent from this list because it is absent from the contract: no definition of a
+target encoding can be identical on both sides, so it was removed rather than reconciled
+(`ml/features/semantics.py`).
 
 The fix is not a better assertion — it is a better *epistemology*. A parity test means
 something only when the two sides are derived by paths that CAN disagree. So:
@@ -25,7 +30,7 @@ something only when the two sides are derived by paths that CAN disagree. So:
 
 The journey is the fact; each encoding is derived from it separately; each adapter reads
 only its own encoding. If the two adapters disagree about what a feature means, the vectors
-differ and this test fails. That is what the six skews were.
+differ and this test fails. That is what the five skews were.
 
 **The boundary of this proof, stated plainly** (a claim this repo has been bad at bounding):
 `_as_ieee_row` encodes what C1/C2/C4/C6/D1 *must mean* for the IEEE adapter to be a correct
