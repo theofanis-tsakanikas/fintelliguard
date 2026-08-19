@@ -468,6 +468,7 @@ make test            # pytest — full suite (local Spark + XGBoost + MLflow + L
 make lint            # ruff check + format check
 make gate-proof      # break every control on purpose; each must be refused, for the right reason
 make guardrail-scan  # guardrail red-team coverage gate
+make verdict-gate    # the five deterministic checks, over the labelled verdict set
 make iac-scan        # checkov over the Terraform layers
 make govern-docs     # regenerate model/dataset cards + AI-Act doc from code
 
