@@ -86,3 +86,7 @@ images/
 # Promo / demo recordings — raw ScreenStudio captures + exports (multi-GB binaries).
 # The curated README screenshots live in docs/assets/ (committed); this stays local-only.
 promo/
+
+# LinkedIn drafts — article + post copy, with their own working images.
+# Publishing surface, not source; the repo is what they link to.
+linkedin/
