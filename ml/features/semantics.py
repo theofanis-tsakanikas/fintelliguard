@@ -1,8 +1,8 @@
-"""What the 15 features MEAN — the missing half of the feature contract.
+"""What the 14 features MEAN — the missing half of the feature contract.
 
 `schema.py` pins names, types and ranges. Both adapters satisfied it completely while
 disagreeing about what the numbers meant, and the parity test could not see it because it
-compared dataclass field types, which cannot diverge. Six skews lived underneath:
+compared dataclass field types, which cannot diverge. Five skews lived underneath:
 
     feature                  stream                    IEEE (training)
     txn_velocity_1h          len(within_1h) + 1        int(C1)          -> min 1 vs min 0
@@ -12,7 +12,7 @@ compared dataclass field types, which cannot diverge. Six skews lived underneath
     amount_sum_1h            amount + sum(prior)       C1 * amount      -> 0.0 while
                                                                            amount_usd = 120
 
-A seventh, `merchant_risk_score`, was removed from the contract entirely rather than
+A sixth, `merchant_risk_score`, was removed from the contract entirely rather than
 reconciled: it is a target encoding, and the labels and the merchant identities live in
 different datasets, so no definition of it can be identical on both sides. See
 `ml/features/schema.py`.

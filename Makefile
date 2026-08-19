@@ -11,7 +11,7 @@ TF_DIR  ?= infra/aws/bootstrap
 PY      := $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help fmt lint test guardrail-scan gate-proof gate-attack iac-scan govern-docs e2e e2e-down plan apply
+.PHONY: help fmt lint test guardrail-scan verdict-gate gate-proof gate-attack iac-scan govern-docs e2e e2e-down plan apply
 
 COMPOSE := docker compose -f deploy/local/docker-compose.yml
 
