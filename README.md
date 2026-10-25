@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/MLflow-2.16-0194E2?logo=mlflow&logoColor=white" alt="MLflow">
   <br>
   <img src="https://img.shields.io/badge/fraud%20AUC--ROC-0.87-2ea44f" alt="fraud AUC-ROC 0.87">
-  <img src="https://img.shields.io/badge/guardrail%20red--team-100%25-2ea44f" alt="guardrail red-team 100%">
+  <img src="https://img.shields.io/badge/guardrail%20red--team-19%2F19%20blocked%20%C2%B7%200%2F6%20benign%20refused-2ea44f" alt="guardrail red-team: 19/19 adversarial blocked, 0/6 benign wrongly refused">
   <img src="https://img.shields.io/badge/tests-592%20passing-2ea44f" alt="592 tests passing">
   <img src="https://img.shields.io/badge/decision%20records-7-2ea44f" alt="7 decision records">
 </p>
