@@ -180,7 +180,9 @@ layers:
 
 - [ ] `gitleaks` is green over the **full history**, not just the latest diff
 - [ ] `git ls-files` lists no `.tfstate`, `terraform.tfvars`, `.env` or key material
-- [ ] No real AWS account id, workspace URL or ARN is legible in a committed screenshot
+- [ ] No real AWS account id, workspace URL or ARN is legible in a committed screenshot —
+      in the console's top-right identity chip **and** in the page body (an ARN, an S3 URI,
+      a log line). The chip is the one people check; the body is the one that leaks.
 - [ ] `make gate-proof` passes — every control still refuses its planted violation, for the right reason
 - [ ] `make govern-docs --check` passes, so the generated regulated-AI documents match the code
 - [ ] The OIDC trust policy still enumerates explicit branch and environment subjects — never `repo:*`
