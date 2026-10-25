@@ -55,8 +55,12 @@ jobs:
       # import and silently changes how `agent.tf` parses (it turned that suite 7/7 red).
       # On PATH is what `tests/cicd/test_iac_scan.py` needs: without it those tests SKIP,
       # and a skip is indistinguishable from a pass in aggregate output.
+      #
+      # Pinned to 3.3.13, the version of the last green run on main. Unpinned, the gate moved
+      # while the code did not: 3.3.19 shipped CKV_AWS_394 and the scan went red on Terraform
+      # untouched since August. A new rule is adopted by bumping this line in a pull request.
       - name: Install checkov (isolated, for the IaC scan canary)
-        run: pipx install checkov
+        run: pipx install checkov==3.3.13
 
       - name: Pytest (full suite)
         run: pytest -q
